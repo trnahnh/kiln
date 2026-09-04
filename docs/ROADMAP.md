@@ -2,7 +2,7 @@
 
 Sequenced by dependency, not by calendar time. Each phase has a hard exit criterion. Don't start the next phase until the current one's criterion is genuinely met, not approximately met.
 
-- [ ] **Phase 0: Foundation**
+- [x] **Phase 0: Foundation**
   Scope: local `kind` cluster, base repo structure, CI skeleton, Prometheus/Grafana stood up.
   Exit criterion: empty cluster with observability running, CI pipeline green on an empty test.
 
