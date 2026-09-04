@@ -79,7 +79,7 @@ Prerequisites: `kind`, `kubectl`, `helm`, Go 1.25+, Java 21+, Docker.
 
 ```bash
 # 1. Bring up a local cluster
-kind create cluster --name kiln-dev
+kind create cluster --config kind-config.yaml
 
 # 2. Install CRDs (once the operator scaffold lands, see ROADMAP.md Phase 1)
 make install-crds
