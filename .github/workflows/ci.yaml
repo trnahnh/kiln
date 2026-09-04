@@ -1,0 +1,11 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Phase 0 placeholder, real test steps arrive with Phase 1 (docs/ROADMAP.md)"
