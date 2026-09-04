@@ -1,0 +1,23 @@
+# Working files, per CLAUDE.md
+CLAUDE.md
+SESSION.md
+PRD.md
+
+# Go
+bin/
+*.test
+*.out
+cover.html
+
+# Gradle / Java
+audit-service/.gradle/
+audit-service/build/
+audit-service/.kotlin/
+*.class
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
