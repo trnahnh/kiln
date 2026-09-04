@@ -75,7 +75,7 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 
 ## Getting started (local dev)
 
-Prerequisites: `kind`, `kubectl`, `helm`, Go 1.22+, Java 21+, Docker.
+Prerequisites: `kind`, `kubectl`, `helm`, Go 1.25+, Java 21+, Docker.
 
 ```bash
 # 1. Bring up a local cluster
