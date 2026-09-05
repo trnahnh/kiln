@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -359,6 +360,14 @@ var _ = Describe("TenantDatabase reconciler", func() {
 			Expect(container.Args).To(HaveLen(1))
 			Expect(container.Args[0]).To(ContainSubstring("pg_dump"))
 			Expect(job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(backupsPVCName(tdb)))
+
+			svc := &corev1.Service{}
+			Expect(get(svc, ns, serviceName(tdb))).To(Succeed())
+			Expect(labels.SelectorFromSet(svc.Spec.Selector).Matches(labels.Set(job.Spec.Template.Labels))).To(BeFalse(),
+				"a Job pod must never be selected by the database Service")
+			sts := &appsv1.StatefulSet{}
+			Expect(get(sts, ns, statefulSetName(tdb))).To(Succeed())
+			Expect(labels.SelectorFromSet(svc.Spec.Selector).Matches(labels.Set(sts.Spec.Template.Labels))).To(BeTrue())
 
 			finishJob(job, batchv1.JobComplete)
 			Eventually(phaseOf(tdb), timeout, interval).Should(Equal(platformv1.PhaseReady))
