@@ -140,7 +140,7 @@ func TestTenantDatabaseLifecycle(t *testing.T) {
 		return cur.Status.ObservedGeneration == cur.Generation && meta.IsStatusConditionTrue(cur.Status.Conditions, platformv1.ConditionReady)
 	}, time.Minute, poll).Should(BeTrue())
 	g.Expect(h.fetch(tdb).Status.LastBackupTime).NotTo(BeNil())
-	g.Expect(h.count(tdb)).To(Equal(rowCount), "no rows lost across the scale/backup collision")
+	h.expectRowCount(tdb, rowCount, "no rows lost across the scale/backup collision")
 	g.Expect(h.eventCount(platformv1.ReasonReconcileConflict)).To(BeNumerically(">=", 1))
 
 	t.Log("restore: damage the table, restore latest, count rows")
@@ -151,7 +151,7 @@ func TestTenantDatabaseLifecycle(t *testing.T) {
 	h.annotate(tdb, platformv1.AnnotationRestoreFrom, platformv1.RestoreFromLatest)
 	g.Eventually(h.phase(tdb), time.Minute, poll).Should(Equal(platformv1.PhaseRestoring))
 	g.Eventually(h.phase(tdb), jobTimeout, poll).Should(Equal(platformv1.PhaseReady))
-	g.Expect(h.count(tdb)).To(Equal(rowCount), "restore must bring back every row from the backup")
+	h.expectRowCount(tdb, rowCount, "restore must bring back every row from the backup")
 
 	t.Log("delete: every owned object disappears with the CR")
 	g.Expect(k8s.Delete(ctx, h.fetch(tdb))).To(Succeed())
@@ -281,18 +281,36 @@ func (h *harness) jobSucceeded(job *batchv1.Job) bool {
 	return false
 }
 
-// expectJobSucceeded dumps the Job's pods and their logs on failure, so a CI-only failure
-// (image pull, eviction, connection refused) explains itself instead of leaving a bool.
+// expectJobSucceeded and expectRowCount dump the whole picture on failure, so a CI-only
+// failure (image pull, eviction, connection refused, a Job that "succeeded" without
+// effect) explains itself instead of leaving a bool.
 func (h *harness) expectJobSucceeded(job *batchv1.Job) {
 	if h.jobSucceeded(job) {
 		return
 	}
-	pods, err := h.clientset.CoreV1().Pods(job.Namespace).List(h.ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	h.dumpState(job.Namespace, job.Labels["platform.internal/tenantdatabase"])
+	h.t.Fatalf("backup Job %s must succeed", job.Name)
+}
+
+func (h *harness) expectRowCount(tdb *platformv1.TenantDatabase, want int, why string) {
+	got := h.count(tdb)
+	if got == want {
+		return
+	}
+	h.dumpState(tdb.Namespace, tdb.Name)
+	h.t.Fatalf("%s: got %d rows, want %d", why, got, want)
+}
+
+func (h *harness) dumpState(ns, name string) {
+	pods, err := h.clientset.CoreV1().Pods(ns).List(h.ctx, metav1.ListOptions{})
 	if err == nil {
 		for _, p := range pods.Items {
-			h.t.Logf("job %s pod %s on %s: phase=%s reason=%q message=%q", job.Name, p.Name, p.Spec.NodeName, p.Status.Phase, p.Status.Reason, p.Status.Message)
+			h.t.Logf("pod %s on %s: phase=%s reason=%q message=%q", p.Name, p.Spec.NodeName, p.Status.Phase, p.Status.Reason, p.Status.Message)
 			for _, cs := range p.Status.ContainerStatuses {
-				h.t.Logf("  container %s: %+v", cs.Name, cs.State)
+				h.t.Logf("  container %s: ready=%v restarts=%d state=%+v last=%+v", cs.Name, cs.Ready, cs.RestartCount, cs.State, cs.LastTerminationState)
+			}
+			if _, isJob := p.Labels["job-name"]; !isJob {
+				continue
 			}
 			raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{}).DoRaw(h.ctx)
 			if err != nil {
@@ -302,6 +320,12 @@ func (h *harness) expectJobSucceeded(job *batchv1.Job) {
 			}
 		}
 	}
+	// The test counts rows over the pod's unix socket; the Jobs reach Postgres through the
+	// Service. Both paths must see the same server.
+	tdb := &platformv1.TenantDatabase{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+	viaSocket, err1 := h.sql(tdb, "SELECT count(*) FROM t")
+	viaService, err2 := h.shell(tdb, `PGPASSWORD="$POSTGRES_PASSWORD" psql -h `+name+` -U postgres -tA -c "SELECT count(*) FROM t"`)
+	h.t.Logf("rows via unix socket: %q (%v); via Service: %q (%v)", strings.TrimSpace(viaSocket), err1, strings.TrimSpace(viaService), err2)
 	// Cluster-wide, because pressure on the node hosting the Job shows up as Node events in
 	// the default namespace and as conditions, not in the test namespace.
 	events, err := h.clientset.CoreV1().Events("").List(h.ctx, metav1.ListOptions{})
@@ -320,16 +344,8 @@ func (h *harness) expectJobSucceeded(job *batchv1.Job) {
 					h.t.Logf("node %s condition %s=%s: %s", n.Name, c.Type, c.Status, c.Message)
 				}
 			}
-			h.t.Logf("node %s allocatable cpu=%s memory=%s ephemeral=%s", n.Name, n.Status.Allocatable.Cpu(), n.Status.Allocatable.Memory(), n.Status.Allocatable.StorageEphemeral())
 		}
 	}
-	db := &corev1.Pod{}
-	if get := h.k8s.Get(h.ctx, types.NamespacedName{Namespace: job.Namespace, Name: job.Labels["platform.internal/tenantdatabase"] + "-0"}, db); get == nil {
-		for _, cs := range db.Status.ContainerStatuses {
-			h.t.Logf("database pod %s on %s: ready=%v restarts=%d state=%+v last=%+v", db.Name, db.Spec.NodeName, cs.Ready, cs.RestartCount, cs.State, cs.LastTerminationState)
-		}
-	}
-	h.t.Fatalf("backup Job %s must succeed", job.Name)
 }
 
 func (h *harness) eventCount(reason string) int {
@@ -355,12 +371,20 @@ func (h *harness) count(tdb *platformv1.TenantDatabase) int {
 // sql runs psql inside the database pod so the check does not depend on network access
 // from the test host.
 func (h *harness) sql(tdb *platformv1.TenantDatabase, statement string) (string, error) {
+	return h.exec(tdb, []string{"psql", "-U", "postgres", "-tA", "-c", statement})
+}
+
+func (h *harness) shell(tdb *platformv1.TenantDatabase, script string) (string, error) {
+	return h.exec(tdb, []string{"sh", "-c", script})
+}
+
+func (h *harness) exec(tdb *platformv1.TenantDatabase, command []string) (string, error) {
 	req := h.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").Namespace(tdb.Namespace).Name(tdb.Name+"-0").
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "postgres",
-			Command:   []string{"psql", "-U", "postgres", "-tA", "-c", statement},
+			Command:   command,
 			Stdout:    true,
 			Stderr:    true,
 		}, scheme.ParameterCodec)
@@ -370,7 +394,7 @@ func (h *harness) sql(tdb *platformv1.TenantDatabase, statement string) (string,
 	}
 	var stdout, stderr bytes.Buffer
 	if err := exec.StreamWithContext(h.ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {
-		return "", fmt.Errorf("psql %q: %w: %s", statement, err, stderr.String())
+		return "", fmt.Errorf("exec %v: %w: %s", command, err, stderr.String())
 	}
 	return stdout.String(), nil
 }
