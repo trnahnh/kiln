@@ -86,6 +86,7 @@ func (h *harness) waitForPlatform() {
 }
 
 func (h *harness) webhookFailsClosed(t *testing.T) {
+	h.g = NewWithT(t)
 	for _, resource := range []string{"databaseclaims", "tenantdatabases"} {
 		wh := h.kyvernoWebhookFor(resource)
 		h.g.Expect(wh).NotTo(BeNil())
@@ -95,6 +96,7 @@ func (h *harness) webhookFailsClosed(t *testing.T) {
 }
 
 func (h *harness) directViolationsRejected(t *testing.T) {
+	h.g = NewWithT(t)
 	cases := []struct {
 		name string
 		obj  *unstructured.Unstructured
@@ -108,7 +110,8 @@ func (h *harness) directViolationsRejected(t *testing.T) {
 	for _, c := range cases {
 		err := h.c.Create(h.ctx, c.obj)
 		h.g.Expect(err).To(HaveOccurred(), "%s must be rejected at admission", c.name)
-		h.g.Expect(apierrors.IsForbidden(err) || apierrors.IsInvalid(err)).To(BeTrue(), "%s: %v", c.name, err)
+		h.g.Expect(apierrors.IsNotFound(err)).To(BeFalse(), "%s: rejected by admission, not by a missing API: %v", c.name, err)
+		h.g.Expect(err.Error()).To(ContainSubstring("admission webhook"), "%s: %v", c.name, err)
 		h.g.Expect(err.Error()).To(ContainSubstring("POLICY_DENIED rule=" + c.rule))
 	}
 
@@ -118,6 +121,7 @@ func (h *harness) directViolationsRejected(t *testing.T) {
 }
 
 func (h *harness) gitFlow(t *testing.T) {
+	h.g = NewWithT(t)
 	branch := "e2e/" + h.runID
 	validClaim := h.claim("checkout-db", 20, goodTags(), "")
 	invalidClaim := h.claim("big-db", 500, goodTags(), "")
@@ -165,15 +169,16 @@ func (h *harness) gitFlow(t *testing.T) {
 	h.g.Eventually(func() int64 { return intField(h.get(gvkTenant, h.ns, "checkout-db"), "spec", "storageGB") },
 		syncTimeout, poll).Should(Equal(int64(30)), "Crossplane keeps the composed resource in step with the live claim")
 
-	t.Log("platform drift is auto-healed")
-	h.labelPolicy("tenantdatabase-storage-ceiling", "e2e-drift", h.runID)
-	h.g.Eventually(func() string {
+	t.Log("platform drift is auto-healed: weakening a policy in-cluster is reverted")
+	h.setPolicyActions("tenantdatabase-storage-ceiling", []interface{}{"Audit"})
+	h.g.Eventually(func() []interface{} {
 		p := h.get(gvkPolicy, "", "tenantdatabase-storage-ceiling")
 		if p == nil {
-			return "missing"
+			return nil
 		}
-		return p.GetLabels()["e2e-drift"]
-	}, syncTimeout, poll).Should(BeEmpty(), "stateless drift must be reverted by kiln-platform selfHeal")
+		actions, _, _ := unstructured.NestedSlice(p.Object, "spec", "validationActions")
+		return actions
+	}, syncTimeout, poll).Should(Equal([]interface{}{"Deny"}), "stateless drift must be reverted by kiln-platform selfHeal")
 }
 
 func goodTags() map[string]interface{} {
@@ -271,18 +276,15 @@ func (h *harness) patchClaimStorage(name string, storageGB int64) {
 	}, time.Minute, poll).Should(Succeed())
 }
 
-func (h *harness) labelPolicy(name, key, value string) {
+func (h *harness) setPolicyActions(name string, actions []interface{}) {
 	h.g.Eventually(func() error {
 		obj := h.get(gvkPolicy, "", name)
 		if obj == nil {
 			return fmt.Errorf("policy %s not found", name)
 		}
-		labels := obj.GetLabels()
-		if labels == nil {
-			labels = map[string]string{}
+		if err := unstructured.SetNestedSlice(obj.Object, actions, "spec", "validationActions"); err != nil {
+			return err
 		}
-		labels[key] = value
-		obj.SetLabels(labels)
 		return h.c.Update(h.ctx, obj)
 	}, time.Minute, poll).Should(Succeed())
 }
