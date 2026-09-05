@@ -314,10 +314,9 @@ func (h *harness) dumpState(ns, name string) {
 			for _, cs := range p.Status.ContainerStatuses {
 				h.t.Logf("  container %s: ready=%v restarts=%d state=%+v last=%+v", cs.Name, cs.Ready, cs.RestartCount, cs.State, cs.LastTerminationState)
 			}
-			if _, isJob := p.Labels["job-name"]; !isJob {
-				continue
-			}
-			raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{}).DoRaw(h.ctx)
+			// Job logs show what failed; the database log shows whether Postgres itself was
+			// restarting, recovering, or refusing at that moment.
+			raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{Timestamps: true}).DoRaw(h.ctx)
 			if err != nil {
 				h.t.Logf("  logs unavailable: %v", err)
 			} else {
