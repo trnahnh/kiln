@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kiln-delivery-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kiln-delivery-controller
+  namespace: kiln-delivery-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kiln-delivery-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kiln-delivery-controller
+subjects:
+  - kind: ServiceAccount
+    name: kiln-delivery-controller
+    namespace: kiln-delivery-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kiln-delivery-controller
+  namespace: kiln-delivery-system
+  labels:
+    app.kubernetes.io/name: kiln-delivery-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kiln-delivery-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kiln-delivery-controller
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: kiln-delivery-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          # Built by `make docker-build` and loaded with `make kind-load`; never pulled.
+          image: kiln-delivery-controller:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --prometheus-url=http://prometheus.monitoring.svc:9090
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
