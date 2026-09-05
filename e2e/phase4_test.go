@@ -18,8 +18,8 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -80,8 +80,8 @@ func TestPhase4ProgressiveDelivery(t *testing.T) {
 }
 
 func (h *canaryHarness) waitForDelivery() {
-	h.t.Log("waiting for istiod and the delivery controller")
-	for _, d := range []types.NamespacedName{{Namespace: "istio-system", Name: "istiod"}, {Namespace: "kiln-delivery-system", Name: "kiln-delivery-controller"}} {
+	h.t.Log("waiting for prometheus, istiod and the delivery controller")
+	for _, d := range []types.NamespacedName{{Namespace: "monitoring", Name: "prometheus"}, {Namespace: "istio-system", Name: "istiod"}, {Namespace: "kiln-delivery-system", Name: "kiln-delivery-controller"}} {
 		h.g.Eventually(func() int32 {
 			dep := &appsv1.Deployment{}
 			if err := h.c.Get(h.ctx, d, dep); err != nil {
@@ -182,7 +182,7 @@ func (h *canaryHarness) brokenVersion(t *testing.T) {
 	h.setServerArgs("server", "-echo-server-default-params=status=500:30")
 	h.start["broken"] = time.Now()
 
-	h.g.Eventually(func() int { _, c := h.weights(); return c }, canaryWait, poll).Should(Equal(20), "the canary receives its first checkpoint of real traffic")
+	h.g.Eventually(func() int { _, c := h.weights(); return c }, canaryWait, poll).Should(Equal(20), h.describe("the canary receives its first checkpoint of real traffic"))
 	shifted := time.Now()
 	h.g.Expect(h.pods(labelRole, "canary")).NotTo(BeEmpty(), "canary pods exist while traffic is split")
 	t.Logf("canary at 20%% after %s; %v", shifted.Sub(h.start["broken"]).Round(time.Second), h.rolloutSummary())
@@ -190,7 +190,7 @@ func (h *canaryHarness) brokenVersion(t *testing.T) {
 	h.g.Eventually(func() bool {
 		p, c := h.weights()
 		return p == 100 && c == 0 && h.replicas(targetApp) == 0 && len(h.pods(labelRole, "canary")) == 0
-	}, canaryWait, poll).Should(BeTrue(), "traffic returned to primary and the canary pods are gone")
+	}, canaryWait, poll).Should(BeTrue(), h.describe("traffic returned to primary and the canary pods are gone"))
 	t.Logf("rolled back on the mesh %s after the split began; %v", time.Since(shifted).Round(time.Second), h.rolloutSummary())
 
 	for _, pod := range h.pods(labelRole, "primary") {
@@ -215,7 +215,7 @@ func (h *canaryHarness) noisyVersion(t *testing.T) {
 			h.seen = append(h.seen, c)
 		}
 		return c == 100
-	}, canaryWait, poll).Should(BeTrue(), "the canary earns all traffic")
+	}, canaryWait, poll).Should(BeTrue(), h.describe("the canary earns all traffic"))
 	t.Logf("canary weights observed on the mesh: %v after %s", h.seen, time.Since(h.start["noisy"]).Round(time.Second))
 	h.g.Expect(h.seen).To(ContainElements(20, 50, 100), "every checkpoint was visited")
 	h.g.Expect(len(h.seen)).To(BeNumerically(">", 3), "confidence-sized sub-steps moved traffic between checkpoints")
@@ -232,7 +232,7 @@ func (h *canaryHarness) noisyVersion(t *testing.T) {
 			}
 		}
 		return true
-	}, canaryWait, poll).Should(BeTrue(), "primary runs the new version and serves everything")
+	}, canaryWait, poll).Should(BeTrue(), h.describe("primary runs the new version and serves everything"))
 	t.Logf("promoted %s after the rollout began; %v", time.Since(h.start["noisy"]).Round(time.Second), h.rolloutSummary())
 
 	codes := h.fortioLoad()
@@ -355,6 +355,7 @@ type rolloutView struct {
 	phase, reason string
 	weight, step  int64
 	samples       int64
+	ready         string
 }
 
 func (h *canaryHarness) rollout() rolloutView {
@@ -369,7 +370,24 @@ func (h *canaryHarness) rollout() rolloutView {
 	v.weight, _, _ = unstructured.NestedInt64(cr.Object, "status", "canaryWeight")
 	v.step, _, _ = unstructured.NestedInt64(cr.Object, "status", "currentStep")
 	v.samples, _, _ = unstructured.NestedInt64(cr.Object, "status", "analysis", "totalSamples")
+	conds, _, _ := unstructured.NestedSlice(cr.Object, "status", "conditions")
+	for _, c := range conds {
+		m, _ := c.(map[string]any)
+		if m["type"] == "Ready" {
+			v.ready = fmt.Sprintf("%v/%v: %v", m["status"], m["reason"], m["message"])
+		}
+	}
 	return v
+}
+
+// describe renders a timeout with the controller's own account of the rollout, so a CI
+// failure says why the mesh never moved instead of only that it did not.
+func (h *canaryHarness) describe(what string) func() string {
+	return func() string {
+		p, c := h.weights()
+		return fmt.Sprintf("%s; VirtualService primary=%d canary=%d; target replicas=%d canary pods=%d; %s; Ready %s",
+			what, p, c, h.replicas(targetApp), len(h.pods(labelRole, "canary")), h.rolloutSummary(), h.rollout().ready)
+	}
 }
 
 func (h *canaryHarness) rolloutSummary() string {
