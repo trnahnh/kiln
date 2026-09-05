@@ -20,6 +20,29 @@ jobs:
       - name: generated files are committed
         run: git diff --exit-code
 
+  gitops-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install kyverno and crossplane CLIs
+        run: |
+          curl -sL https://github.com/kyverno/kyverno/releases/download/v1.19.0/kyverno-cli_v1.19.0_linux_x86_64.tar.gz | tar xz kyverno
+          sudo mv kyverno /usr/local/bin/
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh | XP_VERSION=v2.4.0 sh
+          sudo mv crossplane /usr/local/bin/
+      - name: policy tests
+        run: kyverno test gitops/policies/tests
+      - name: composition renders the golden-path TenantDatabase
+        working-directory: gitops/compositions
+        run: |
+          crossplane render examples/databaseclaim.yaml composition-standard-postgres.yaml function-patch-and-transform.yaml > rendered.yaml
+          cat rendered.yaml
+          grep -q '^kind: TenantDatabase$' rendered.yaml
+          grep -q '  storageGB: 20$' rendered.yaml
+          grep -q '  version: "16"$' rendered.yaml
+          grep -q 'platform.internal/team: checkout$' rendered.yaml
+          grep -q 'platform.internal/cost-center: eng-platform$' rendered.yaml
+
   operator-integration:
     runs-on: ubuntu-latest
     needs: operator-unit
@@ -35,3 +58,27 @@ jobs:
           cluster_name: kiln-dev
       - run: make test-integration
         working-directory: operator
+
+  platform-e2e:
+    runs-on: ubuntu-latest
+    needs: gitops-unit
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: e2e/go.mod
+          cache-dependency-path: e2e/go.sum
+      - uses: helm/kind-action@v1
+        with:
+          config: kind-config.yaml
+          cluster_name: kiln-dev
+      - name: bootstrap argocd and the app of apps
+        run: |
+          kubectl apply -k gitops/argocd/install --server-side
+          kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
+          kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+          kubectl apply -f gitops/argocd/root.yaml
+      - run: go test -tags=e2e ./... -v -count=1 -timeout 40m
+        working-directory: e2e
