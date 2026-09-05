@@ -171,9 +171,7 @@ func (h *canaryHarness) initialVersion(t *testing.T) {
 	h.g.Expect(h.pods(labelRole, "canary")).To(BeEmpty())
 	h.g.Eventually(func() int32 { return h.available(loadgenApp) }, canaryWait, poll).Should(Equal(int32(1)))
 
-	codes := h.fortioLoad()
-	t.Logf("traffic through the mesh before any rollout: %v", codes)
-	h.g.Expect(errorRate(codes)).To(BeNumerically("<", 0.01))
+	t.Logf("traffic through the mesh before any rollout: %v", h.healthyTraffic(0.01))
 	h.logRollout()
 }
 
@@ -197,9 +195,7 @@ func (h *canaryHarness) brokenVersion(t *testing.T) {
 		h.g.Expect(pod.Spec.Containers[0].Args).To(Equal([]string{"server"}), "primary pod %s must still run the original version", pod.Name)
 		h.g.Expect(podReady(pod)).To(BeTrue(), "primary pod %s must be ready", pod.Name)
 	}
-	codes := h.fortioLoad()
-	t.Logf("traffic through the mesh after rollback: %v", codes)
-	h.g.Expect(errorRate(codes)).To(BeNumerically("<", 0.01), "real requests after rollback must be healthy again")
+	t.Logf("traffic through the mesh after rollback: %v", h.healthyTraffic(0.01))
 	h.g.Expect(h.rollout().reason).To(Equal("RegressionDetected"))
 }
 
@@ -235,9 +231,7 @@ func (h *canaryHarness) noisyVersion(t *testing.T) {
 	}, canaryWait, poll).Should(BeTrue(), h.describe("primary runs the new version and serves everything"))
 	t.Logf("promoted %s after the rollout began; %v", time.Since(h.start["noisy"]).Round(time.Second), h.rolloutSummary())
 
-	codes := h.fortioLoad()
-	t.Logf("traffic through the mesh after promotion: %v", codes)
-	h.g.Expect(errorRate(codes)).To(BeNumerically("<", 0.02), "the promoted version serves with its expected noise")
+	t.Logf("traffic through the mesh after promotion: %v", h.healthyTraffic(0.02))
 	h.g.Expect(h.rollout().phase).To(Equal("Succeeded"))
 }
 
@@ -309,32 +303,61 @@ func podReady(p corev1.Pod) bool {
 	return false
 }
 
+// healthyTraffic proves the mesh serves the host from the caller's side: repeated bounded
+// load runs until one comes back under the error ceiling. The API server shows a route
+// flip and pod deletions a second or two before the client sidecar has the new endpoints,
+// and that propagation window is Istio's, not the controller's, so a run started inside
+// it is retried rather than counted.
+func (h *canaryHarness) healthyTraffic(maxErrorRate float64) map[string]int64 {
+	var codes map[string]int64
+	h.g.Eventually(func() float64 {
+		var err error
+		codes, err = h.fortioLoad()
+		if err != nil {
+			h.t.Logf("load run failed, retrying: %v", err)
+			return 1
+		}
+		return errorRate(codes)
+	}, 90*time.Second, poll).Should(BeNumerically("<", maxErrorRate), "real requests through the mesh must be healthy")
+	return codes
+}
+
 // fortioLoad runs a bounded load from inside the meshed client pod and returns the
 // response-code histogram, so what the mesh actually served is measured from the caller's
 // side rather than inferred from any controller state.
-func (h *canaryHarness) fortioLoad() map[string]int64 {
+func (h *canaryHarness) fortioLoad() (map[string]int64, error) {
 	pods := h.pods("app", loadgenApp)
 	h.g.Expect(pods).NotTo(BeEmpty())
 	req := h.cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(h.ns).Name(pods[0].Name).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "fortio",
-			Command:   []string{"fortio", "load", "-quiet", "-qps", "50", "-c", "4", "-t", trafficWindow, "-json", "-", "http://" + targetApp + ":8080/"},
+			Command:   []string{"fortio", "load", "-quiet", "-allow-initial-errors", "-qps", "50", "-c", "4", "-t", trafficWindow, "-json", "-", "http://" + targetApp + ":8080/"},
 			Stdout:    true,
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 	exec, err := remotecommand.NewSPDYExecutor(h.cfg, "POST", req.URL())
-	h.g.Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return nil, err
+	}
 	var stdout, stderr bytes.Buffer
-	h.g.Expect(exec.StreamWithContext(h.ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr})).To(Succeed(), stderr.String())
+	if err := exec.StreamWithContext(h.ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
 	raw := stdout.String()
 	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
-	h.g.Expect(start).To(BeNumerically(">=", 0), "no JSON in fortio output: %s %s", raw, stderr.String())
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("no JSON in fortio output: %s %s", raw, stderr.String())
+	}
 	var result struct {
 		RetCodes map[string]int64 `json:"RetCodes"`
 	}
-	h.g.Expect(json.Unmarshal([]byte(raw[start:end+1]), &result)).To(Succeed())
-	h.g.Expect(result.RetCodes).NotTo(BeEmpty())
-	return result.RetCodes
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &result); err != nil {
+		return nil, err
+	}
+	if len(result.RetCodes) == 0 {
+		return nil, fmt.Errorf("fortio reported no responses")
+	}
+	return result.RetCodes, nil
 }
 
 func errorRate(codes map[string]int64) float64 {
