@@ -100,6 +100,10 @@ func (r *TenantDatabaseReconciler) reconcileProvisioning(ctx context.Context, td
 
 	sts := &appsv1.StatefulSet{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: tdb.Namespace, Name: statefulSetName(tdb)}, sts); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Just created; the informer cache has not caught up yet.
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		}
 		return ctrl.Result{}, err
 	}
 	if !statefulSetReady(sts) {
