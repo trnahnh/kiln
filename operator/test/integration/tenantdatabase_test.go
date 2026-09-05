@@ -325,6 +325,25 @@ func (h *harness) dumpState(ns, name string) {
 			}
 		}
 	}
+	// Cross-node Service traffic is kube-proxy's and the CNI's business; their logs on the
+	// nodes that ran Jobs show whether a rule sync was in flight when a connection failed.
+	if pods, err := h.clientset.CoreV1().Pods("kube-system").List(h.ctx, metav1.ListOptions{}); err == nil {
+		jobNodes := map[string]bool{}
+		if own, err := h.clientset.CoreV1().Pods(ns).List(h.ctx, metav1.ListOptions{}); err == nil {
+			for _, p := range own.Items {
+				jobNodes[p.Spec.NodeName] = true
+			}
+		}
+		for _, p := range pods.Items {
+			if !jobNodes[p.Spec.NodeName] || !(strings.HasPrefix(p.Name, "kube-proxy") || strings.HasPrefix(p.Name, "kindnet")) {
+				continue
+			}
+			raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{TailLines: ptr.To[int64](40)}).DoRaw(h.ctx)
+			if err == nil {
+				h.t.Logf("%s on %s, last 40 lines:\n%s", p.Name, p.Spec.NodeName, string(raw))
+			}
+		}
+	}
 	// The test counts rows over the pod's unix socket; the Jobs reach Postgres through the
 	// Service. Both paths must see the same server.
 	tdb := &platformv1.TenantDatabase{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
