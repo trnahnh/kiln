@@ -104,8 +104,9 @@ spec:
     alpha: 0.05                   # false-rollback ceiling
     beta: 0.1                     # missed-regression ceiling at the regression magnitude
     regressionFactor: 2           # alternative hypothesis = this multiple of the limit
+    drainGrace: 10s               # canary keeps running this long after traffic leaves it; 0s parks it at once
 status:
-  phase: Analyzing        # Initializing | Progressing | Analyzing | Promoting | RolledBack | Succeeded
+  phase: Analyzing        # Initializing | Progressing | Analyzing | Promoting | Draining | RolledBack | Succeeded
   currentStep: 1          # 1-based index of the last checkpoint reached
   canaryWeight: 12        # mirrors the VirtualService; informational, never the proof
   lastAnalysisResult: Pending   # Pending | Pass | Fail
@@ -113,6 +114,7 @@ status:
   targetReplicas: 3       # what the target had before being parked at zero
   observedTemplateHash: 9a23219f06d5f0d2
   promotedTemplateHash: 1c1d1f6e5c0a4e83
+  trafficFlippedAt: null  # set while Draining: when the VirtualService went to 100% primary
   analysis:               # persisted test state so a restarted controller resumes
     checkpoint: 1
     errors:   {cumulative: 0.42, sinceCheckpoint: -1.9}
@@ -131,7 +133,7 @@ status:
       reason: Analyzing
 ```
 
-Phases: `Initializing` clones primary and parks the target; `Succeeded` and `RolledBack` are idle, all traffic on primary, target at zero replicas; `Progressing` waits for the canary pods and a baseline metric snapshot; `Analyzing` runs the sequential test every `interval`; `Promoting` copies the accepted template onto primary and hands traffic back. Labels the controller manages: `platform.internal/canary-role` (`primary` or `canary`, on pod templates and Service selectors) and `platform.internal/canary-rollout` (the CR name). Events: `RolloutStarted`, `TrafficShifted`, `Promoting`, `Promoted`, and a Warning `RolledBack` carrying the reason and criterion.
+Phases: `Initializing` clones primary and parks the target; `Succeeded` and `RolledBack` are idle, all traffic on primary, target at zero replicas; `Progressing` waits for the canary pods and a baseline metric snapshot; `Analyzing` runs the sequential test every `interval`; `Promoting` copies the accepted template onto primary and hands traffic back; `Draining` (after a promotion or a rollback) has already routed everything to primary and keeps the canary running for `drainGrace` so clients whose sidecars still hold the old routes are not sent to vanished pods, then parks it. Labels the controller manages: `platform.internal/canary-role` (`primary` or `canary`, on pod templates and Service selectors) and `platform.internal/canary-rollout` (the CR name). Events: `RolloutStarted`, `TrafficShifted`, `Promoting`, `Promoted`, and a Warning `RolledBack` carrying the reason and criterion.
 
 ## ChaosExperiment CRD
 
