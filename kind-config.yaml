@@ -1,5 +1,27 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: kiln-dev
+# Two spot-like and two on-demand-like workers so the scheduler plugin has something to
+# choose between. Cost labels follow the node economics contract in API_REFERENCE.md.
 nodes:
   - role: control-plane
+  - role: worker
+    labels:
+      kiln.platform.internal/capacity-type: spot
+      kiln.platform.internal/hourly-cost: "0.03"
+      kiln.platform.internal/preemption-risk: "0.2"
+  - role: worker
+    labels:
+      kiln.platform.internal/capacity-type: spot
+      kiln.platform.internal/hourly-cost: "0.03"
+      kiln.platform.internal/preemption-risk: "0.2"
+  - role: worker
+    labels:
+      kiln.platform.internal/capacity-type: on-demand
+      kiln.platform.internal/hourly-cost: "0.10"
+      kiln.platform.internal/preemption-risk: "0"
+  - role: worker
+    labels:
+      kiln.platform.internal/capacity-type: on-demand
+      kiln.platform.internal/hourly-cost: "0.10"
+      kiln.platform.internal/preemption-risk: "0"
