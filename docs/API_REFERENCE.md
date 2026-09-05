@@ -65,17 +65,20 @@ metadata:
   name: checkout-db
   namespace: team-checkout
 spec:
-  compositionRef:
-    name: standard-postgres     # or a custom composition
+  crossplane:                    # Crossplane's own fields; optional, defaults to standard-postgres
+    compositionRef:
+      name: standard-postgres    # or a custom composition
   parameters:
-    tier: standard
+    tier: standard               # standard | custom
     storageGB: 20
     tags:
       team: checkout
       costCenter: eng-platform
 ```
 
-Requests using `compositionRef: standard-postgres` inherit platform defaults (instance class, backup retention, network placement). Requests using a `custom` composition must specify those fields explicitly and are subject to stricter OPA/Kyverno review.
+The claim is a namespaced Crossplane v2 composite resource ([ADR-0005](decisions/0005-databaseclaim-is-a-namespaced-crossplane-v2-xr.md)); `spec.crossplane` holds Crossplane's selection fields and `spec.parameters` the request. Requests using `standard-postgres` inherit platform defaults (Postgres 16, daily 03:00 backup, standard tier) and yield a `TenantDatabase` of the same name in the same namespace, owned by the claim, labelled `platform.internal/team` and `platform.internal/cost-center` from `tags`. Requests using a `custom` composition must specify those fields explicitly and are subject to stricter OPA/Kyverno review; no custom composition exists yet, and policy rejects `tier: custom` until one does.
+
+**Admission rules** ([ADR-0006](decisions/0006-org-rules-as-fail-closed-kyverno-validating-policies.md), defined in `gitops/policies`): `tags.team` and `tags.costCenter` are mandatory; `storageGB` is at most 100 on both the claim and any `TenantDatabase`; only the standard tier and composition are accepted. A rejected request never creates an object; the error message reads `POLICY_DENIED rule=<rule>: <reason>`.
 
 ## CanaryRollout CRD
 
