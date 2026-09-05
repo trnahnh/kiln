@@ -14,7 +14,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: Crossplane compositions, ArgoCD sync, OPA/Kyverno gating in front of the operator.
   Exit criterion: a request that violates policy is rejected before reaching the operator; a valid request flows end to end through Git.
 
-- [ ] **Phase 3: Scheduler plugin**
+- [x] **Phase 3: Scheduler plugin**
   Scope: scoring function, spot-price integration.
   Exit criterion: demonstrable cost reduction on a synthetic multi-node cluster versus the default scheduler, with the scoring rationale documented in code and in `SYSTEM_DESIGN.md`.
 
