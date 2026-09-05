@@ -54,8 +54,9 @@ func main() {
 	}
 
 	if err := (&controller.TenantDatabaseReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("tenantdatabase"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "failed to create controller", "controller", "tenantdatabase")
 		os.Exit(1)

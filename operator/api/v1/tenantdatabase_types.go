@@ -39,6 +39,7 @@ const (
 	ReasonProvisioning      = "Provisioning"
 	ReasonProvisionFailed   = "ProvisionFailed"
 	ReasonScaling           = "Scaling"
+	ReasonScaleFailed       = "ScaleFailed"
 	ReasonBackingUp         = "BackingUp"
 	ReasonBackupFailed      = "BackupFailed"
 	ReasonRestoring         = "Restoring"
