@@ -128,6 +128,28 @@ status:
   abortReason: null
 ```
 
+## Scheduler placement contract
+
+Owned by the Scheduler plugin ([`SYSTEM_DESIGN.md#3`](SYSTEM_DESIGN.md#3-costgpu-aware-scheduler-plugin)). Pods opt into the cost-aware scheduler with `spec.schedulerName: kiln-scheduler`.
+
+**Pod label** ([ADR-0009](decisions/0009-workload-class-label-gates-spot-placement.md)):
+
+| Label | Values | Default when absent |
+|---|---|---|
+| `kiln.platform.internal/workload-class` | `latency-sensitive`, `standard`, `batch` | `latency-sensitive` (never placed on spot) |
+
+**Node labels** ([ADR-0010](decisions/0010-node-economics-as-labels-with-pluggable-price-sources.md)):
+
+| Label | Values |
+|---|---|
+| `kiln.platform.internal/capacity-type` | `spot`, `on-demand` |
+| `kiln.platform.internal/hourly-cost` | decimal USD per hour |
+| `kiln.platform.internal/preemption-risk` | optional, 0 to 1; default 0.05 for spot, ignored for on-demand |
+
+A node missing the contract is treated as on-demand at the highest known hourly cost. On EKS the `aws` price source derives the same facts from `eks.amazonaws.com/capacityType` or `karpenter.sh/capacity-type`, `node.kubernetes.io/instance-type`, zone and region.
+
+**Plugin arguments** (`KubeSchedulerConfiguration` `pluginConfig`, name `CostAware`): `weights.cost`, `weights.fragmentation`, `weights.preemption`, integers summing to 100; defaults 50/30/20.
+
 ## Audit event schema
 
 Emitted by every subsystem to the Kafka event stream, consumed by the Audit/RBAC service.
