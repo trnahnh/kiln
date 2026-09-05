@@ -1,0 +1,58 @@
+# Sidecar-mode control plane. Injected pods carry the prometheus.io annotations, so the
+# ADR-0001 scrape config picks up istio_requests_total and the latency histogram unchanged.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istiod
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    chart: istiod
+    targetRevision: 1.30.4
+    helm:
+      releaseName: istiod
+      valuesObject:
+        pilot:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        global:
+          proxy:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 40Mi
+              limits:
+                memory: 256Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  # istiod rewrites its own webhook CA bundle; the chart-rendered value is not the live one.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

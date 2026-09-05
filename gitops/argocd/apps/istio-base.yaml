@@ -1,0 +1,34 @@
+# Istio's CRDs and cluster roles; istiod follows in the next wave (ADR-0011).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-base
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    chart: base
+    targetRevision: 1.30.4
+    helm:
+      releaseName: istio-base
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  # Istio's CRDs exceed the client-side apply annotation limit; server-side apply is the
+  # supported install path.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

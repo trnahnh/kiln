@@ -9,11 +9,14 @@ metadata:
 spec:
   project: default
   sources:
-    # The operator generates its CRD; Git delivers it, so a fresh cluster has the kind the
-    # composition emits and the policy guards before either is applied.
+    # Each Go module generates its own CRD; Git delivers them all here (ADR-0012), so a
+    # fresh cluster has every platform kind before anything that emits or guards one.
     - repoURL: https://github.com/trnahnh/kiln.git
       targetRevision: main
       path: operator/config/crd/bases
+    - repoURL: https://github.com/trnahnh/kiln.git
+      targetRevision: main
+      path: delivery-controller/config/crd/bases
     - repoURL: https://github.com/trnahnh/kiln.git
       targetRevision: main
       path: gitops/compositions
