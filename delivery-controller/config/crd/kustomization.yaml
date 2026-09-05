@@ -1,0 +1,2 @@
+resources:
+- bases/platform.internal_canaryrollouts.yaml
