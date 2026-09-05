@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,15 +49,21 @@ const (
 	rowCount   = 10000
 )
 
-// delayedBackups keeps the real pg_dump but holds the Job open first, so the collision
-// window is deterministic instead of depending on how fast a tiny database dumps.
-type delayedBackups struct {
+// testCommands wraps the real PostgresCommands. In normal mode it holds the backup Job
+// open first, so the collision window is deterministic instead of depending on how fast a
+// tiny database dumps. In failing mode it points the unmodified backup script at a
+// database that does not exist, so pg_dump itself exits non-zero through run().
+type testCommands struct {
 	controller.Commands
-	hold time.Duration
+	hold        time.Duration
+	failBackups atomic.Bool
 }
 
-func (d delayedBackups) BackupScript(backupID string) string {
-	return fmt.Sprintf("sleep %d\n%s", int(d.hold.Seconds()), d.Commands.BackupScript(backupID))
+func (c *testCommands) BackupScript(backupID string) string {
+	if c.failBackups.Load() {
+		return "export PGDATABASE=kiln-no-such-db\n" + c.Commands.BackupScript(backupID)
+	}
+	return fmt.Sprintf("sleep %d\n%s", int(c.hold.Seconds()), c.Commands.BackupScript(backupID))
 }
 
 type harness struct {
@@ -67,6 +74,7 @@ type harness struct {
 	k8s       client.Client
 	clientset *kubernetes.Clientset
 	ns        string
+	commands  *testCommands
 }
 
 func TestTenantDatabaseLifecycle(t *testing.T) {
@@ -87,7 +95,8 @@ func TestTenantDatabaseLifecycle(t *testing.T) {
 	clientset, err := kubernetes.NewForConfig(cfg)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	h := &harness{t: t, g: g, ctx: ctx, cfg: cfg, k8s: k8s, clientset: clientset}
+	h := &harness{t: t, g: g, ctx: ctx, cfg: cfg, k8s: k8s, clientset: clientset,
+		commands: &testCommands{Commands: controller.PostgresCommands{}, hold: backupHold}}
 	h.allowVolumeExpansion("standard")
 	h.startManager()
 
@@ -153,6 +162,26 @@ func TestTenantDatabaseLifecycle(t *testing.T) {
 	g.Eventually(h.phase(tdb), jobTimeout, poll).Should(Equal(platformv1.PhaseReady))
 	h.expectRowCount(tdb, rowCount, "restore must bring back every row from the backup")
 
+	t.Log("backup failure: a genuine pg_dump error returns the database to Ready with BackupFailed")
+	lastGood := h.fetch(tdb).Status.LastBackupTime
+	g.Expect(lastGood).NotTo(BeNil())
+	h.commands.failBackups.Store(true)
+	h.annotate(tdb, platformv1.AnnotationBackup, platformv1.AnnotationBackupNow)
+	g.Eventually(h.phase(tdb), time.Minute, poll).Should(Equal(platformv1.PhaseBackingUp))
+	var failing *batchv1.Job
+	g.Eventually(func() *batchv1.Job { failing = h.activeJob(tdb, "backup"); return failing }, time.Minute, poll).ShouldNot(BeNil())
+	g.Eventually(func() bool { return h.jobFinished(failing) }, jobTimeout, poll).Should(BeTrue())
+	g.Expect(h.jobSucceeded(failing)).To(BeFalse(), "pg_dump against a missing database must fail the Job")
+	h.expectJobPodExit(failing, 1, `step "pg_dump"`, "does not exist")
+
+	g.Eventually(h.phase(tdb), time.Minute, poll).Should(Equal(platformv1.PhaseReady))
+	g.Eventually(h.conditionReason(tdb, platformv1.ConditionProgressing), time.Minute, poll).Should(Equal(platformv1.ReasonBackupFailed))
+	g.Expect(meta.IsStatusConditionTrue(h.fetch(tdb).Status.Conditions, platformv1.ConditionReady)).To(BeTrue(), "the database stays available")
+	g.Expect(h.eventCount(platformv1.ReasonBackupFailed)).To(BeNumerically(">=", 1), "a Warning BackupFailed event is recorded")
+	g.Expect(h.fetch(tdb).Status.LastBackupTime.Time).To(Equal(lastGood.Time), "a failed backup does not advance lastBackupTime")
+	h.expectRowCount(tdb, rowCount, "a failed backup leaves the data untouched")
+	h.commands.failBackups.Store(false)
+
 	t.Log("delete: every owned object disappears with the CR")
 	g.Expect(k8s.Delete(ctx, h.fetch(tdb))).To(Succeed())
 	g.Eventually(func() bool {
@@ -176,7 +205,7 @@ func (h *harness) startManager() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tenantdatabase"),
-		Commands: delayedBackups{Commands: controller.PostgresCommands{}, hold: backupHold},
+		Commands: h.commands,
 	}
 	h.g.Expect(r.SetupWithManager(mgr)).To(Succeed())
 	go func() {
@@ -290,6 +319,24 @@ func (h *harness) expectJobSucceeded(job *batchv1.Job) {
 	}
 	h.dumpState(job.Namespace, job.Labels["platform.internal/tenantdatabase"])
 	h.t.Fatalf("backup Job %s must succeed", job.Name)
+}
+
+// expectJobPodExit reads the Job pod's actual container exit code and log: ground truth
+// for "the tool really failed", as opposed to a status written by the test.
+func (h *harness) expectJobPodExit(job *batchv1.Job, exitCode int32, logSubstrings ...string) {
+	pods, err := h.clientset.CoreV1().Pods(job.Namespace).List(h.ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	h.g.Expect(err).NotTo(HaveOccurred())
+	h.g.Expect(pods.Items).To(HaveLen(1), "backoffLimit 0 means exactly one pod")
+	p := pods.Items[0]
+	h.g.Expect(p.Status.Phase).To(Equal(corev1.PodFailed))
+	term := p.Status.ContainerStatuses[0].State.Terminated
+	h.g.Expect(term).NotTo(BeNil())
+	h.g.Expect(term.ExitCode).To(Equal(exitCode))
+	raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{}).DoRaw(h.ctx)
+	h.g.Expect(err).NotTo(HaveOccurred())
+	for _, want := range logSubstrings {
+		h.g.Expect(string(raw)).To(ContainSubstring(want))
+	}
 }
 
 func (h *harness) expectRowCount(tdb *platformv1.TenantDatabase, want int, why string) {
