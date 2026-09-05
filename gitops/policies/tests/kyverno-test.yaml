@@ -1,0 +1,30 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: org-rules
+policies:
+  - ../databaseclaim-org-rules.yaml
+  - ../tenantdatabase-storage-ceiling.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: databaseclaim-org-rules
+    isValidatingPolicy: true
+    kind: DatabaseClaim
+    resources: [good-claim, at-ceiling]
+    result: pass
+  - policy: databaseclaim-org-rules
+    isValidatingPolicy: true
+    kind: DatabaseClaim
+    resources: [missing-tags, missing-cost-center, over-ceiling, custom-tier, other-composition]
+    result: fail
+  - policy: tenantdatabase-storage-ceiling
+    isValidatingPolicy: true
+    kind: TenantDatabase
+    resources: [direct-ok]
+    result: pass
+  - policy: tenantdatabase-storage-ceiling
+    isValidatingPolicy: true
+    kind: TenantDatabase
+    resources: [direct-over-ceiling]
+    result: fail

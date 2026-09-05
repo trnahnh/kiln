@@ -1,0 +1,104 @@
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: good-claim
+  namespace: team-checkout
+spec:
+  parameters:
+    tier: standard
+    storageGB: 20
+    tags:
+      team: checkout
+      costCenter: eng-platform
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: missing-tags
+  namespace: team-checkout
+spec:
+  parameters:
+    storageGB: 20
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: missing-cost-center
+  namespace: team-checkout
+spec:
+  parameters:
+    storageGB: 20
+    tags:
+      team: checkout
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: over-ceiling
+  namespace: team-checkout
+spec:
+  parameters:
+    storageGB: 101
+    tags:
+      team: checkout
+      costCenter: eng-platform
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: at-ceiling
+  namespace: team-checkout
+spec:
+  parameters:
+    storageGB: 100
+    tags:
+      team: checkout
+      costCenter: eng-platform
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: custom-tier
+  namespace: team-checkout
+spec:
+  parameters:
+    tier: custom
+    storageGB: 20
+    tags:
+      team: checkout
+      costCenter: eng-platform
+---
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: other-composition
+  namespace: team-checkout
+spec:
+  crossplane:
+    compositionRef:
+      name: custom-postgres
+  parameters:
+    storageGB: 20
+    tags:
+      team: checkout
+      costCenter: eng-platform
+---
+apiVersion: platform.internal/v1
+kind: TenantDatabase
+metadata:
+  name: direct-ok
+  namespace: team-checkout
+spec:
+  engine: postgres
+  version: "16"
+  storageGB: 100
+---
+apiVersion: platform.internal/v1
+kind: TenantDatabase
+metadata:
+  name: direct-over-ceiling
+  namespace: team-checkout
+spec:
+  engine: postgres
+  version: "16"
+  storageGB: 101
