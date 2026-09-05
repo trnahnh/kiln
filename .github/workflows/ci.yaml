@@ -116,10 +116,12 @@ jobs:
         with:
           config: kind-config.yaml
           cluster_name: kiln-dev
-      - name: load the images and bootstrap argocd
+      - name: load the images, stand up observability and bootstrap argocd
         run: |
           make -C scheduler-plugin kind-load
           make -C delivery-controller kind-load
+          kubectl apply -f gitops/observability/
+          kubectl -n monitoring rollout status deploy/prometheus --timeout=300s
           kubectl apply -k gitops/argocd/install --server-side
           kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
