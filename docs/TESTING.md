@@ -4,8 +4,8 @@ General principle across every subsystem: business/decision logic is isolated fr
 
 ## Operator
 
-- **Unit tests:** reconciler state machine tested with `envtest` (fake API server). Every phase transition (`Provisioning -> Ready`, `Ready -> Backing Up -> Ready`, etc.) has an explicit test, including rejected/conflicting transitions.
-- **Integration tests:** real `kind` cluster in CI. Concurrency test simulates a scale-up event arriving mid-backup and asserts the second event is queued, not interleaved, and no data loss occurs.
+- **Unit tests:** the phase table lives in `operator/internal/lifecycle` with no Kubernetes dependency, and every documented transition, every rejected/conflicting transition, and the terminal `Failed` phase has a plain Go test there. The reconciler is tested with `envtest` (real API server, no controllers) in `operator/internal/controller`: provisioning and owner references, unsupported engine, idempotency, scaling, backup, restore, finalizer draining, and the scale-during-backup collision, which asserts on the PVC's actual spec and the Job's state rather than on `status.phase`. Run with `make test` in `operator/`.
+- **Integration tests:** `TestTenantDatabaseLifecycle` in `operator/test/integration` (build tag `integration`) runs the manager in-process against the current kubeconfig context, a real `kind` cluster in CI. It provisions Postgres, loads rows through `psql` inside the pod, holds a backup Job open through the injected backup command, scales mid-backup, and asserts the PVC does not change until the Job completes, that the row count is unchanged afterwards, and that a restore from that dump brings back deleted rows. Run with `make test-integration`.
 
 ## Provisioning/GitOps
 
