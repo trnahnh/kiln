@@ -75,17 +75,17 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 
 ## Getting started (local dev)
 
-Prerequisites: `kind`, `kubectl`, `helm`, Go 1.25+, Java 21+, Docker.
+Prerequisites: `kind`, `kubectl`, Go 1.26+, Java 21+, Docker.
 
 ```bash
 # 1. Bring up a local cluster
 kind create cluster --config kind-config.yaml
 
-# 2. Install CRDs (once the operator scaffold lands, see ROADMAP.md Phase 1)
-make install-crds
+# 2. Install the TenantDatabase CRD
+cd operator && make install
 
 # 3. Run the operator locally against the kind cluster
-cd operator && make run
+make run
 
 # 4. Stand up observability
 kubectl apply -f gitops/observability/

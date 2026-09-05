@@ -1,0 +1,6 @@
+namespace: kiln-operator-system
+namePrefix: kiln-operator-
+resources:
+- ../crd
+- ../rbac
+- ../manager

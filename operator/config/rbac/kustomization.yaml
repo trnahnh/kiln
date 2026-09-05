@@ -1,0 +1,9 @@
+resources:
+- service_account.yaml
+- role.yaml
+- role_binding.yaml
+- leader_election_role.yaml
+- leader_election_role_binding.yaml
+- tenantdatabase_admin_role.yaml
+- tenantdatabase_editor_role.yaml
+- tenantdatabase_viewer_role.yaml

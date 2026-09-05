@@ -1,0 +1,10 @@
+apiVersion: platform.internal/v1
+kind: TenantDatabase
+metadata:
+  name: team-checkout-db
+spec:
+  engine: postgres
+  version: "16"
+  storageGB: 20
+  backupSchedule: "0 3 * * *"
+  tier: standard
