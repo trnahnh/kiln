@@ -86,15 +86,22 @@ kubectl patch storageclass standard -p '{"allowVolumeExpansion":true}'
 # 2. Stand up observability
 kubectl apply -f gitops/observability/
 
-# 3. Bootstrap ArgoCD; from here Git installs the TenantDatabase CRD, Crossplane,
-#    Kyverno, the DatabaseClaim composition, the admission policies and tenant claims
+# 3. Build the cost-aware scheduler image and hand it to kind; ArgoCD deploys it but
+#    never pulls it
+make -C scheduler-plugin docker-build kind-load
+
+# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase CRD, Crossplane,
+#    Kyverno, the kiln-scheduler, the DatabaseClaim composition, the admission
+#    policies and tenant claims
 kubectl apply -k gitops/argocd/install --server-side
 kubectl -n argocd rollout status statefulset/argocd-application-controller
 kubectl apply -f gitops/argocd/root.yaml
 
-# 4. Run the operator locally against the kind cluster
+# 5. Run the operator locally against the kind cluster
 cd operator && make run
 ```
+
+Pods opt into cost-aware placement with `schedulerName: kiln-scheduler` and declare their class with the `kiln.platform.internal/workload-class` label; see `docs/API_REFERENCE.md`.
 
 Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/`; the org rules it must satisfy live in `gitops/policies`.
 
