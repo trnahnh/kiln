@@ -6,6 +6,7 @@ PRD.md
 # Go
 bin/
 *.test
+*.exe
 *.out
 cover.html
 
