@@ -1,0 +1,14 @@
+# Crossplane only receives RBAC for the kinds it composes through this aggregation label;
+# without it the Composition cannot create a TenantDatabase.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:compose:tenantdatabases
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: [platform.internal]
+    resources: [tenantdatabases, tenantdatabases/status]
+    verbs: [get, list, watch, create, update, patch, delete]
