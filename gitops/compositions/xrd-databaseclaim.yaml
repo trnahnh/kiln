@@ -1,0 +1,42 @@
+# Namespaced composite resource: the claim is the XR itself (ADR-0005).
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: databaseclaims.platform.internal
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  scope: Namespaced
+  group: platform.internal
+  names:
+    kind: DatabaseClaim
+    plural: databaseclaims
+  defaultCompositionRef:
+    name: standard-postgres
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [parameters]
+              properties:
+                parameters:
+                  type: object
+                  required: [storageGB]
+                  properties:
+                    tier:
+                      type: string
+                      enum: [standard, custom]
+                      default: standard
+                    storageGB:
+                      type: integer
+                      minimum: 1
+                    tags:
+                      type: object
+                      additionalProperties:
+                        type: string

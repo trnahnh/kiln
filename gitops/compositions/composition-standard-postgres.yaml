@@ -1,0 +1,46 @@
+# Golden path: platform defaults for everything a standard-tier request does not say.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: standard-postgres
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  compositeTypeRef:
+    apiVersion: platform.internal/v1alpha1
+    kind: DatabaseClaim
+  mode: Pipeline
+  pipeline:
+    - step: compose-tenantdatabase
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: tenantdatabase
+            base:
+              apiVersion: platform.internal/v1
+              kind: TenantDatabase
+              spec:
+                engine: postgres
+                version: "16"
+                storageGB: 1
+                backupSchedule: "0 3 * * *"
+                tier: standard
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.storageGB
+                toFieldPath: spec.storageGB
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.tier
+                toFieldPath: spec.tier
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.tags.team
+                toFieldPath: metadata.labels[platform.internal/team]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.tags.costCenter
+                toFieldPath: metadata.labels[platform.internal/cost-center]
