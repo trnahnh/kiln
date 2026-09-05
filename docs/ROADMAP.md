@@ -6,7 +6,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: local `kind` cluster, base repo structure, CI skeleton, Prometheus/Grafana stood up.
   Exit criterion: empty cluster with observability running, CI pipeline green on an empty test.
 
-- [ ] **Phase 1: Operator**
+- [x] **Phase 1: Operator**
   Scope: `TenantDatabase` CRD, reconciler, backup/restore logic.
   Exit criterion: can provision, scale, back up, and restore a Postgres instance through the CRD alone; concurrent scale+backup test passes with zero data loss.
 
