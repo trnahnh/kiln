@@ -120,11 +120,16 @@ func desiredStatefulSet(tdb *platformv1.TenantDatabase) *appsv1.StatefulSet {
 							passwordEnv(tdb),
 						},
 						VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: postgresDataPath}},
+						// Over TCP on purpose: the image's temporary initdb server answers the unix
+						// socket long before the real server listens, and the Service must not get an
+						// endpoint until clients can actually connect.
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{
-								Exec: &corev1.ExecAction{Command: []string{"pg_isready", "-U", "postgres"}},
+								Exec: &corev1.ExecAction{Command: []string{"pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"}},
 							},
-							PeriodSeconds: 5,
+							PeriodSeconds:    5,
+							TimeoutSeconds:   3,
+							FailureThreshold: 3,
 						},
 					}},
 					Volumes: []corev1.Volume{{
