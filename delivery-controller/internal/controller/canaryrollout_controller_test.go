@@ -130,7 +130,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		Expect(cr.Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisFail))
 		Expect(cr.Status.Analysis.TotalSamples).To(BeNumerically(">=", 1800), "three capped windows were needed")
-		Expect(get[*appsv1.Deployment](appName+"-primary").Spec.Template.Spec.Containers[0].Image).To(Equal("fortio/fortio:v1"), "primary never saw the bad version")
+		Expect(get[*appsv1.Deployment](appName + "-primary").Spec.Template.Spec.Containers[0].Image).To(Equal("fortio/fortio:v1"), "primary never saw the bad version")
 		Expect(eventReasons()).To(ContainElement("RolledBack"))
 	})
 
@@ -147,7 +147,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 
 		Eventually(func() bool {
 			markRolledOut(appName)
-			return get[*appsv1.Deployment](appName+"-primary").Spec.Template.Spec.Containers[0].Image == "fortio/fortio:v3"
+			return get[*appsv1.Deployment](appName + "-primary").Spec.Template.Spec.Containers[0].Image == "fortio/fortio:v3"
 		}, 2*timeout, tick).Should(BeTrue(), "primary receives the accepted template")
 		Expect(get[*platformv1.CanaryRollout](appName).Status.Phase).To(Equal(platformv1.PhasePromoting))
 		_, c := weights()
@@ -165,7 +165,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisPass))
 		Expect(cr.Status.PromotedTemplateHash).To(Equal(templateHash(get[*appsv1.Deployment](appName).Spec.Template)))
 		Expect(meta.IsStatusConditionTrue(cr.Status.Conditions, platformv1.ConditionReady)).To(BeTrue())
-		Expect(*get[*appsv1.Deployment](appName+"-primary").Spec.Replicas).To(Equal(int32(2)))
+		Expect(*get[*appsv1.Deployment](appName + "-primary").Spec.Replicas).To(Equal(int32(2)))
 		for _, pct := range []int{5, 20, 50, 100} {
 			Expect(eventMessages()).To(ContainElement(ContainSubstring(fmt.Sprintf("canary receives %d%% of traffic", pct))))
 		}
