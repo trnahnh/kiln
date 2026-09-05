@@ -190,6 +190,9 @@ spec:
                     - requests
                     - slow
                     type: object
+                  lastTickAt:
+                    format: date-time
+                    type: string
                   latency:
                     description: |-
                       Per-criterion sequential test state; the cumulative statistic decides rollback, the
@@ -277,8 +280,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               currentStep:
-                description: 1-based index of the checkpoint the rollout is working
-                  toward.
+                description: 1-based index of the last stepPercentages checkpoint
+                  reached.
                 format: int32
                 type: integer
               lastAnalysisResult:

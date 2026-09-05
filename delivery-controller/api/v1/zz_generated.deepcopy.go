@@ -35,6 +35,10 @@ func (in *AnalysisState) DeepCopyInto(out *AnalysisState) {
 		in, out := &in.CheckpointStartedAt, &out.CheckpointStartedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.LastTickAt != nil {
+		in, out := &in.LastTickAt, &out.LastTickAt
+		*out = (*in).DeepCopy()
+	}
 	if in.LastCounters != nil {
 		in, out := &in.LastCounters, &out.LastCounters
 		*out = new(CounterSnapshot)

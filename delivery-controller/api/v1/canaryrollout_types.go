@@ -37,6 +37,11 @@ const (
 
 	ReasonInitializing       = "Initializing"
 	ReasonTargetMissing      = "TargetMissing"
+	ReasonServiceMissing     = "ServiceMissing"
+	ReasonInvalidSpec        = "InvalidSpec"
+	ReasonCanaryUnavailable  = "CanaryUnavailable"
+	ReasonRolloutStarted     = "RolloutStarted"
+	ReasonTrafficShifted     = "TrafficShifted"
 	ReasonWaitingForCanary   = "WaitingForCanary"
 	ReasonAnalyzing          = "Analyzing"
 	ReasonPromoting          = "Promoting"
@@ -166,6 +171,8 @@ type AnalysisState struct {
 	// +optional
 	CheckpointStartedAt *metav1.Time `json:"checkpointStartedAt,omitempty"`
 	// +optional
+	LastTickAt *metav1.Time `json:"lastTickAt,omitempty"`
+	// +optional
 	LastCounters *CounterSnapshot `json:"lastCounters,omitempty"`
 }
 
@@ -173,7 +180,7 @@ type CanaryRolloutStatus struct {
 	// +optional
 	Phase Phase `json:"phase,omitempty"`
 
-	// 1-based index of the checkpoint the rollout is working toward.
+	// 1-based index of the last stepPercentages checkpoint reached.
 	// +optional
 	CurrentStep int32 `json:"currentStep,omitempty"`
 
