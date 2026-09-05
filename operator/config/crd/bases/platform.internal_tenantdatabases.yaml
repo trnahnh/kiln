@@ -14,7 +14,23 @@ spec:
     singular: tenantdatabase
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .spec.storageGB
+      name: Storage
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.lastBackupTime
+      name: Last Backup
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         properties:
@@ -36,6 +52,41 @@ spec:
           metadata:
             type: object
           spec:
+            properties:
+              backupSchedule:
+                description: Cron expression; empty disables scheduled backups.
+                type: string
+              engine:
+                enum:
+                - postgres
+                - redis
+                type: string
+                x-kubernetes-validations:
+                - message: engine is immutable
+                  rule: self == oldSelf
+              storageGB:
+                format: int32
+                minimum: 1
+                type: integer
+                x-kubernetes-validations:
+                - message: storageGB cannot shrink
+                  rule: self >= oldSelf
+              tier:
+                default: standard
+                enum:
+                - standard
+                - custom
+                type: string
+              version:
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: version is immutable
+                  rule: self == oldSelf
+            required:
+            - engine
+            - storageGB
+            - version
             type: object
           status:
             properties:
@@ -98,6 +149,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastBackupTime:
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Provisioning
+                - Ready
+                - Backing Up
+                - Restoring
+                - Failed
+                type: string
             type: object
         required:
         - spec
