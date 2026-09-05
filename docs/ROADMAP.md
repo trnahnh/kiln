@@ -10,7 +10,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: `TenantDatabase` CRD, reconciler, backup/restore logic.
   Exit criterion: can provision, scale, back up, and restore a Postgres instance through the CRD alone; concurrent scale+backup test passes with zero data loss.
 
-- [ ] **Phase 2: Policy + GitOps**
+- [x] **Phase 2: Policy + GitOps**
   Scope: Crossplane compositions, ArgoCD sync, OPA/Kyverno gating in front of the operator.
   Exit criterion: a request that violates policy is rejected before reaching the operator; a valid request flows end to end through Git.
 
