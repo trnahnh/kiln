@@ -1,0 +1,37 @@
+# Second scheduler profile. NodeResourcesFit and BalancedAllocation scoring are disabled
+# because they spread pods; CostAware's fragmentation term packs instead (SYSTEM_DESIGN.md
+# section 3). Their Filter extension points stay on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kiln-scheduler-config
+  namespace: kiln-scheduler-system
+data:
+  config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: false
+    profiles:
+      - schedulerName: kiln-scheduler
+        plugins:
+          filter:
+            enabled:
+              - name: CostAware
+          preScore:
+            enabled:
+              - name: CostAware
+          score:
+            enabled:
+              - name: CostAware
+                weight: 5
+            disabled:
+              - name: NodeResourcesFit
+              - name: NodeResourcesBalancedAllocation
+        pluginConfig:
+          - name: CostAware
+            args:
+              weights:
+                cost: 50
+                fragmentation: 30
+                preemption: 20
