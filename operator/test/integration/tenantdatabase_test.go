@@ -306,6 +306,11 @@ func (h *harness) dumpState(ns, name string) {
 	if err == nil {
 		for _, p := range pods.Items {
 			h.t.Logf("pod %s on %s: phase=%s reason=%q message=%q", p.Name, p.Spec.NodeName, p.Status.Phase, p.Status.Reason, p.Status.Message)
+			for _, c := range p.Status.Conditions {
+				if c.Type == corev1.PodReady || c.Type == corev1.ContainersReady {
+					h.t.Logf("  condition %s=%s since %s (%s)", c.Type, c.Status, c.LastTransitionTime.Format("15:04:05"), c.Reason)
+				}
+			}
 			for _, cs := range p.Status.ContainerStatuses {
 				h.t.Logf("  container %s: ready=%v restarts=%d state=%+v last=%+v", cs.Name, cs.Ready, cs.RestartCount, cs.State, cs.LastTerminationState)
 			}
@@ -332,7 +337,15 @@ func (h *harness) dumpState(ns, name string) {
 	if err == nil {
 		for _, e := range events.Items {
 			if e.Type == corev1.EventTypeWarning {
-				h.t.Logf("warning event %s %s/%s at %s: %s %s", e.InvolvedObject.Kind, e.InvolvedObject.Namespace, e.InvolvedObject.Name, e.LastTimestamp.Format("15:04:05"), e.Reason, e.Message)
+				last := e.LastTimestamp.Time
+				if e.Series != nil && e.Series.LastObservedTime.After(last) {
+					last = e.Series.LastObservedTime.Time
+				}
+				count := e.Count
+				if e.Series != nil && e.Series.Count > count {
+					count = e.Series.Count
+				}
+				h.t.Logf("warning event %s %s/%s first %s last %s x%d: %s %s", e.InvolvedObject.Kind, e.InvolvedObject.Namespace, e.InvolvedObject.Name, e.FirstTimestamp.Format("15:04:05"), last.Format("15:04:05"), count, e.Reason, e.Message)
 			}
 		}
 	}
