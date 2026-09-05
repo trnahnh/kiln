@@ -34,6 +34,7 @@ const (
 	defaultAlpha           = 0.05
 	defaultBeta            = 0.10
 	defaultRegression      = 2.0
+	defaultDrainGrace      = 10 * time.Second
 	waitRequeue            = 5 * time.Second
 	idleRequeue            = time.Minute
 )
@@ -137,6 +138,8 @@ func (r *CanaryRolloutReconciler) reconcile(ctx context.Context, cr *platformv1.
 		return r.analyze(ctx, cr, cfg, target, hash)
 	case platformv1.PhasePromoting:
 		return r.promote(ctx, cr, cfg, target, hash)
+	case platformv1.PhaseDraining:
+		return r.drain(ctx, cr, cfg, target)
 	}
 	return ctrl.Result{}, fmt.Errorf("unknown phase %q", cr.Status.Phase)
 }
@@ -212,7 +215,7 @@ func (r *CanaryRolloutReconciler) progress(ctx context.Context, cr *platformv1.C
 		if rolledOut(target) {
 			reason = platformv1.ReasonMetricsUnavailable
 		}
-		return r.rollback(ctx, cr, target, reason, "")
+		return r.rollback(ctx, cr, cfg, target, reason, "")
 	}
 	if !rolledOut(target) {
 		return ctrl.Result{RequeueAfter: waitRequeue}, nil
@@ -266,7 +269,7 @@ func (r *CanaryRolloutReconciler) analyze(ctx context.Context, cr *platformv1.Ca
 
 	switch d.Action {
 	case analysis.Rollback:
-		return r.rollback(ctx, cr, target, string(d.Reason), d.Criterion)
+		return r.rollback(ctx, cr, cfg, target, string(d.Reason), d.Criterion)
 	case analysis.Promote:
 		cr.Status.Phase = platformv1.PhasePromoting
 		cr.Status.Reason = platformv1.ReasonPromoting
@@ -313,31 +316,52 @@ func (r *CanaryRolloutReconciler) promote(ctx context.Context, cr *platformv1.Ca
 	if !rolledOut(primary) {
 		return ctrl.Result{RequeueAfter: waitRequeue}, nil
 	}
-	if err := r.Router.Ensure(ctx, r.route(cr, target), 0); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.scaleTarget(ctx, target, 0); err != nil {
-		return ctrl.Result{}, err
-	}
 	cr.Status.PromotedTemplateHash = hash
-	r.settle(cr, platformv1.PhaseSucceeded, platformv1.ReasonPromoted, platformv1.AnalysisPass)
 	r.Recorder.Eventf(cr, corev1.EventTypeNormal, platformv1.ReasonPromoted, "primary now runs template %s", hash)
-	return ctrl.Result{}, nil
+	return r.beginDrain(ctx, cr, cfg, target, platformv1.ReasonPromoted, platformv1.AnalysisPass)
 }
 
-func (r *CanaryRolloutReconciler) rollback(ctx context.Context, cr *platformv1.CanaryRollout, target *appsv1.Deployment, reason, criterion string) (ctrl.Result, error) {
-	if err := r.Router.Ensure(ctx, r.route(cr, target), 0); err != nil {
-		return ctrl.Result{}, fmt.Errorf("routing all traffic back to primary: %w", err)
-	}
-	if err := r.scaleTarget(ctx, target, 0); err != nil {
-		return ctrl.Result{}, err
-	}
-	r.settle(cr, platformv1.PhaseRolledBack, reason, platformv1.AnalysisFail)
+func (r *CanaryRolloutReconciler) rollback(ctx context.Context, cr *platformv1.CanaryRollout, cfg rolloutConfig, target *appsv1.Deployment, reason, criterion string) (ctrl.Result, error) {
 	msg := reason
 	if criterion != "" {
 		msg = fmt.Sprintf("%s on %s", reason, criterion)
 	}
-	r.Recorder.Eventf(cr, corev1.EventTypeWarning, "RolledBack", "%s: traffic returned to primary, canary scaled to zero", msg)
+	r.Recorder.Eventf(cr, corev1.EventTypeWarning, "RolledBack", "%s: traffic returned to primary, canary drains for %s", msg, cfg.drainGrace(cr))
+	return r.beginDrain(ctx, cr, cfg, target, reason, platformv1.AnalysisFail)
+}
+
+// beginDrain routes everything to primary but leaves the canary running for the grace:
+// the API server shows the new route before every client sidecar has it, and a canary
+// parked in the same instant would fail the requests still routed to it.
+func (r *CanaryRolloutReconciler) beginDrain(ctx context.Context, cr *platformv1.CanaryRollout, cfg rolloutConfig, target *appsv1.Deployment, reason string, result platformv1.AnalysisResult) (ctrl.Result, error) {
+	if err := r.Router.Ensure(ctx, r.route(cr, target), 0); err != nil {
+		return ctrl.Result{}, fmt.Errorf("routing all traffic to primary: %w", err)
+	}
+	now := r.now()
+	cr.Status.Phase = platformv1.PhaseDraining
+	cr.Status.Reason = reason
+	cr.Status.LastAnalysisResult = result
+	cr.Status.CanaryWeight = 0
+	cr.Status.TrafficFlippedAt = &now
+	canaryWeight.WithLabelValues(cr.Namespace, cr.Name).Set(0)
+	r.setReady(cr, false, reason, fmt.Sprintf("traffic on primary, canary draining for %s", cfg.drainGrace(cr)))
+	return r.drain(ctx, cr, cfg, target)
+}
+
+func (r *CanaryRolloutReconciler) drain(ctx context.Context, cr *platformv1.CanaryRollout, cfg rolloutConfig, target *appsv1.Deployment) (ctrl.Result, error) {
+	if cr.Status.TrafficFlippedAt != nil {
+		if left := cfg.drainGrace(cr) - r.now().Sub(cr.Status.TrafficFlippedAt.Time); left > 0 {
+			return ctrl.Result{RequeueAfter: left}, nil
+		}
+	}
+	if err := r.scaleTarget(ctx, target, 0); err != nil {
+		return ctrl.Result{}, err
+	}
+	phase := platformv1.PhaseRolledBack
+	if cr.Status.Reason == platformv1.ReasonPromoted {
+		phase = platformv1.PhaseSucceeded
+	}
+	r.settle(cr, phase, cr.Status.Reason, cr.Status.LastAnalysisResult)
 	return ctrl.Result{}, nil
 }
 
@@ -348,6 +372,7 @@ func (r *CanaryRolloutReconciler) settle(cr *platformv1.CanaryRollout, phase pla
 	cr.Status.Reason = reason
 	cr.Status.LastAnalysisResult = result
 	cr.Status.CanaryWeight = 0
+	cr.Status.TrafficFlippedAt = nil
 	canaryWeight.WithLabelValues(cr.Namespace, cr.Name).Set(0)
 	r.setReady(cr, phase == platformv1.PhaseSucceeded, reason, "traffic on primary, canary parked at zero replicas")
 	r.setProgressing(cr, false, reason, "")
@@ -437,6 +462,13 @@ func (r *CanaryRolloutReconciler) setProgressing(cr *platformv1.CanaryRollout, p
 
 type rolloutConfig struct {
 	analysis.Config
+}
+
+func (c rolloutConfig) drainGrace(cr *platformv1.CanaryRollout) time.Duration {
+	if a := cr.Spec.Analysis; a != nil && a.DrainGrace != nil {
+		return max(0, a.DrainGrace.Duration)
+	}
+	return defaultDrainGrace
 }
 
 func (c rolloutConfig) interval(cr *platformv1.CanaryRollout) time.Duration {

@@ -10,7 +10,7 @@ type MetricProvider string
 
 const MetricProviderPrometheus MetricProvider = "prometheus"
 
-// +kubebuilder:validation:Enum=Initializing;Progressing;Analyzing;Promoting;RolledBack;Succeeded
+// +kubebuilder:validation:Enum=Initializing;Progressing;Analyzing;Promoting;Draining;RolledBack;Succeeded
 type Phase string
 
 const (
@@ -18,6 +18,7 @@ const (
 	PhaseProgressing  Phase = "Progressing"
 	PhaseAnalyzing    Phase = "Analyzing"
 	PhasePromoting    Phase = "Promoting"
+	PhaseDraining     Phase = "Draining"
 	PhaseRolledBack   Phase = "RolledBack"
 	PhaseSucceeded    Phase = "Succeeded"
 )
@@ -107,6 +108,13 @@ type AnalysisSpec struct {
 	// +kubebuilder:validation:Minimum=1.1
 	// +optional
 	RegressionFactor float64 `json:"regressionFactor,omitempty"`
+
+	// How long the canary keeps running after traffic has been routed away from it, so
+	// meshed clients whose sidecars have not yet received the new routes are not sent to
+	// pods that are already gone. Unset means 10s; an explicit zero parks the canary
+	// immediately.
+	// +optional
+	DrainGrace *metav1.Duration `json:"drainGrace,omitempty"`
 }
 
 type CanaryRolloutSpec struct {
@@ -203,6 +211,11 @@ type CanaryRolloutStatus struct {
 
 	// +optional
 	PromotedTemplateHash string `json:"promotedTemplateHash,omitempty"`
+
+	// When the VirtualService was last routed entirely to primary; the canary is parked
+	// drainGrace after this.
+	// +optional
+	TrafficFlippedAt *metav1.Time `json:"trafficFlippedAt,omitempty"`
 
 	// +optional
 	Analysis *AnalysisState `json:"analysis,omitempty"`

@@ -72,6 +72,13 @@ spec:
                     maximum: 0.5
                     minimum: 0.0001
                     type: number
+                  drainGrace:
+                    description: |-
+                      How long the canary keeps running after traffic has been routed away from it, so
+                      meshed clients whose sidecars have not yet received the new routes are not sent to
+                      pods that are already gone. Unset means 10s; an explicit zero parks the canary
+                      immediately.
+                    type: string
                   interval:
                     default: 15s
                     description: How often metrics are read and the sequential test
@@ -301,6 +308,7 @@ spec:
                 - Progressing
                 - Analyzing
                 - Promoting
+                - Draining
                 - RolledBack
                 - Succeeded
                 type: string
@@ -314,6 +322,12 @@ spec:
                   rollout since the target is scaled to zero while idle.
                 format: int32
                 type: integer
+              trafficFlippedAt:
+                description: |-
+                  When the VirtualService was last routed entirely to primary; the canary is parked
+                  drainGrace after this.
+                format: date-time
+                type: string
             type: object
         required:
         - spec
