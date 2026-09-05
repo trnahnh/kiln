@@ -18,7 +18,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: scoring function, spot-price integration.
   Exit criterion: demonstrable cost reduction on a synthetic multi-node cluster versus the default scheduler, with the scoring rationale documented in code and in `SYSTEM_DESIGN.md`.
 
-- [ ] **Phase 4: Progressive delivery**
+- [x] **Phase 4: Progressive delivery**
   Scope: canary controller, statistical rollback logic.
   Exit criterion: injected synthetic regression triggers auto-rollback; injected noise does not false-trigger.
 
