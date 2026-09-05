@@ -184,12 +184,21 @@ func (h *canaryHarness) brokenVersion(t *testing.T) {
 	shifted := time.Now()
 	h.g.Expect(h.pods(labelRole, "canary")).NotTo(BeEmpty(), "canary pods exist while traffic is split")
 	t.Logf("canary at 20%% after %s; %v", shifted.Sub(h.start["broken"]).Round(time.Second), h.rolloutSummary())
+	span := h.startSpanningLoad("90s")
 
+	var flipped time.Time
 	h.g.Eventually(func() bool {
 		p, c := h.weights()
+		if p == 100 && c == 0 && flipped.IsZero() {
+			flipped = time.Now()
+		}
 		return p == 100 && c == 0 && h.replicas(targetApp) == 0 && len(h.pods(labelRole, "canary")) == 0
 	}, canaryWait, poll).Should(BeTrue(), h.describe("traffic returned to primary and the canary pods are gone"))
-	t.Logf("rolled back on the mesh %s after the split began; %v", time.Since(shifted).Round(time.Second), h.rolloutSummary())
+	t.Logf("rolled back on the mesh %s after the split began, canary parked %s after the flip; %v", flipped.Sub(shifted).Round(time.Second), time.Since(flipped).Round(time.Second), h.rolloutSummary())
+	h.g.Expect(time.Since(flipped)).To(BeNumerically(">=", 5*time.Second), "the canary must outlive the traffic flip by the drain grace")
+	// The broken canary's own 500s are expected while it held 20%; what the mesh must not
+	// add is a single failed connection or Envoy-generated 503 across the flip.
+	span.assertNoMeshFailures(flipped, 1)
 
 	for _, pod := range h.pods(labelRole, "primary") {
 		h.g.Expect(pod.Spec.Containers[0].Args).To(Equal([]string{"server"}), "primary pod %s must still run the original version", pod.Name)
@@ -215,9 +224,14 @@ func (h *canaryHarness) noisyVersion(t *testing.T) {
 	t.Logf("canary weights observed on the mesh: %v after %s", h.seen, time.Since(h.start["noisy"]).Round(time.Second))
 	h.g.Expect(h.seen).To(ContainElements(20, 50, 100), "every checkpoint was visited")
 	h.g.Expect(len(h.seen)).To(BeNumerically(">", 3), "confidence-sized sub-steps moved traffic between checkpoints")
+	span := h.startSpanningLoad("120s")
 
+	var flipped time.Time
 	h.g.Eventually(func() bool {
 		p, c := h.weights()
+		if p == 100 && c == 0 && flipped.IsZero() {
+			flipped = time.Now()
+		}
 		primary := h.pods(labelRole, "primary")
 		if p != 100 || c != 0 || h.replicas(targetApp) != 0 || len(h.pods(labelRole, "canary")) != 0 || len(primary) != 2 {
 			return false
@@ -229,7 +243,11 @@ func (h *canaryHarness) noisyVersion(t *testing.T) {
 		}
 		return true
 	}, canaryWait, poll).Should(BeTrue(), h.describe("primary runs the new version and serves everything"))
-	t.Logf("promoted %s after the rollout began; %v", time.Since(h.start["noisy"]).Round(time.Second), h.rolloutSummary())
+	t.Logf("promoted %s after the rollout began, canary parked %s after the flip; %v", time.Since(h.start["noisy"]).Round(time.Second), time.Since(flipped).Round(time.Second), h.rolloutSummary())
+	h.g.Expect(time.Since(flipped)).To(BeNumerically(">=", 5*time.Second), "the canary must outlive the traffic flip by the drain grace")
+	// Continuous traffic across the flip and the drain: the version's own 0.5% of 500s is
+	// allowed, nothing the mesh adds is.
+	span.assertNoMeshFailures(flipped, 0.02)
 
 	t.Logf("traffic through the mesh after promotion: %v", h.healthyTraffic(0.02))
 	h.g.Expect(h.rollout().phase).To(Equal("Succeeded"))
@@ -303,6 +321,51 @@ func podReady(p corev1.Pod) bool {
 	return false
 }
 
+// spanningLoad is one uninterrupted fortio run from the meshed client whose window is
+// meant to contain a traffic flip, so what clients saw at the exact moment is measured.
+type spanningLoad struct {
+	h        *canaryHarness
+	started  time.Time
+	finished time.Time
+	codes    map[string]int64
+	err      error
+	done     chan struct{}
+}
+
+func (h *canaryHarness) startSpanningLoad(window string) *spanningLoad {
+	s := &spanningLoad{h: h, started: time.Now(), done: make(chan struct{})}
+	go func() {
+		defer close(s.done)
+		s.codes, s.err = h.fortioLoadFor(window)
+		s.finished = time.Now()
+	}()
+	return s
+}
+
+// assertNoMeshFailures requires the run to have bracketed the flip and to contain no
+// connection failure (fortio code -1) and no Envoy-generated 503; the application's own
+// 500s may not exceed max500Rate.
+func (s *spanningLoad) assertNoMeshFailures(flipped time.Time, max500Rate float64) {
+	<-s.done
+	s.h.g.Expect(s.err).NotTo(HaveOccurred(), "spanning load run failed")
+	s.h.t.Logf("continuous traffic %s to %s across the flip at %s: %v", s.started.Format("15:04:05"), s.finished.Format("15:04:05"), flipped.Format("15:04:05"), s.codes)
+	s.h.g.Expect(s.started).To(BeTemporally("<", flipped), "the load run must have started before the traffic flip")
+	s.h.g.Expect(s.finished).To(BeTemporally(">", flipped.Add(5*time.Second)), "the load run must have outlasted the flip and the drain")
+	var total, app500 int64
+	for code, n := range s.codes {
+		total += n
+		switch code {
+		case "200":
+		case "500":
+			app500 += n
+		default:
+			s.h.g.Expect(n).To(BeZero(), "mesh-level failures with code %s across the flip", code)
+		}
+	}
+	s.h.g.Expect(total).To(BeNumerically(">", 0))
+	s.h.g.Expect(float64(app500)/float64(total)).To(BeNumerically("<=", max500Rate))
+}
+
 // healthyTraffic proves the mesh serves the host from the caller's side: repeated bounded
 // load runs until one comes back under the error ceiling. The API server shows a route
 // flip and pod deletions a second or two before the client sidecar has the new endpoints,
@@ -326,12 +389,18 @@ func (h *canaryHarness) healthyTraffic(maxErrorRate float64) map[string]int64 {
 // response-code histogram, so what the mesh actually served is measured from the caller's
 // side rather than inferred from any controller state.
 func (h *canaryHarness) fortioLoad() (map[string]int64, error) {
+	return h.fortioLoadFor(trafficWindow)
+}
+
+func (h *canaryHarness) fortioLoadFor(window string) (map[string]int64, error) {
 	pods := h.pods("app", loadgenApp)
-	h.g.Expect(pods).NotTo(BeEmpty())
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("no %s pod", loadgenApp)
+	}
 	req := h.cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(h.ns).Name(pods[0].Name).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "fortio",
-			Command:   []string{"fortio", "load", "-quiet", "-allow-initial-errors", "-qps", "50", "-c", "4", "-t", trafficWindow, "-json", "-", "http://" + targetApp + ":8080/"},
+			Command:   []string{"fortio", "load", "-quiet", "-allow-initial-errors", "-qps", "50", "-c", "4", "-t", window, "-json", "-", "http://" + targetApp + ":8080/"},
 			Stdout:    true,
 			Stderr:    true,
 		}, scheme.ParameterCodec)
