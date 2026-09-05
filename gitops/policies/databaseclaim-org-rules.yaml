@@ -1,0 +1,37 @@
+# Org rules for the golden path (ADR-0006). Fails closed: if Kyverno is unavailable the
+# claim is rejected, never admitted unchecked.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: databaseclaim-org-rules
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [platform.internal]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [databaseclaims]
+  validations:
+    - expression: >-
+        has(object.spec.parameters.tags) && has(object.spec.parameters.tags.team)
+        && object.spec.parameters.tags.team != ''
+      message: "POLICY_DENIED rule=mandatory-tags: spec.parameters.tags.team is required"
+    - expression: >-
+        has(object.spec.parameters.tags) && has(object.spec.parameters.tags.costCenter)
+        && object.spec.parameters.tags.costCenter != ''
+      message: "POLICY_DENIED rule=mandatory-tags: spec.parameters.tags.costCenter is required"
+    - expression: object.spec.parameters.storageGB <= 100
+      message: "POLICY_DENIED rule=storage-ceiling: spec.parameters.storageGB must be at most 100"
+    - expression: "!has(object.spec.parameters.tier) || object.spec.parameters.tier == 'standard'"
+      message: "POLICY_DENIED rule=standard-tier-only: custom tier is not available yet"
+    - expression: >-
+        !has(object.spec.crossplane) || !has(object.spec.crossplane.compositionRef)
+        || object.spec.crossplane.compositionRef.name == 'standard-postgres'
+      message: "POLICY_DENIED rule=standard-tier-only: only the standard-postgres composition is available"

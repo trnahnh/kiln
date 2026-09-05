@@ -1,0 +1,23 @@
+# The ceiling also holds for a TenantDatabase applied directly, bypassing the claim
+# (ADR-0006). Who may do that at all is Phase 6 RBAC, not repeated here.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: tenantdatabase-storage-ceiling
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [platform.internal]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [tenantdatabases]
+  validations:
+    - expression: object.spec.storageGB <= 100
+      message: "POLICY_DENIED rule=storage-ceiling: spec.storageGB must be at most 100"
