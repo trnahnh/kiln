@@ -49,6 +49,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 				Analysis: &platformv1.AnalysisSpec{
 					Interval:        metav1.Duration{Duration: time.Second},
 					MaxStepDuration: metav1.Duration{Duration: 20 * time.Second},
+					DrainGrace:      &metav1.Duration{Duration: 3 * time.Second},
 				},
 			},
 		})).To(Succeed())
@@ -122,13 +123,25 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		Eventually(func() bool {
 			markRolledOut(appName)
 			p, c := weights()
-			return p == 100 && c == 0 && *get[*appsv1.Deployment](appName).Spec.Replicas == 0
-		}, timeout, tick).Should(BeTrue(), "traffic returned to primary and the canary scaled to zero")
-
+			return p == 100 && c == 0
+		}, timeout, tick).Should(BeTrue(), "traffic returned to primary")
+		flipped := time.Now()
 		cr := get[*platformv1.CanaryRollout](appName)
-		Expect(cr.Status.Phase).To(Equal(platformv1.PhaseRolledBack))
+		Expect(cr.Status.Phase).To(Equal(platformv1.PhaseDraining))
+		Expect(cr.Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
+		Expect(*get[*appsv1.Deployment](appName).Spec.Replicas).To(Equal(int32(2)), "the canary keeps running while clients catch up")
+
+		Eventually(func() int32 {
+			markRolledOut(appName)
+			return *get[*appsv1.Deployment](appName).Spec.Replicas
+		}, timeout, tick).Should(Equal(int32(0)), "the canary is parked after the grace")
+		Expect(time.Since(flipped)).To(BeNumerically(">=", 2*time.Second), "parking waited for the drain grace")
+
+		Eventually(func() platformv1.Phase { return get[*platformv1.CanaryRollout](appName).Status.Phase }, timeout, tick).Should(Equal(platformv1.PhaseRolledBack))
+		cr = get[*platformv1.CanaryRollout](appName)
 		Expect(cr.Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisFail))
+		Expect(cr.Status.TrafficFlippedAt).To(BeNil())
 		Expect(cr.Status.Analysis.TotalSamples).To(BeNumerically(">=", 1800), "three capped windows were needed")
 		Expect(get[*appsv1.Deployment](appName + "-primary").Spec.Template.Spec.Containers[0].Image).To(Equal("fortio/fortio:v1"), "primary never saw the bad version")
 		Expect(eventReasons()).To(ContainElement("RolledBack"))
@@ -157,11 +170,19 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 			markRolledOut(appName + "-primary")
 			markRolledOut(appName)
 			p, c := weights()
-			return p == 100 && c == 0 && *get[*appsv1.Deployment](appName).Spec.Replicas == 0
-		}, timeout, tick).Should(BeTrue(), "traffic handed back to the updated primary and the canary parked")
+			return p == 100 && c == 0
+		}, timeout, tick).Should(BeTrue(), "traffic handed back to the updated primary")
+		flipped := time.Now()
+		Expect(get[*platformv1.CanaryRollout](appName).Status.Phase).To(Equal(platformv1.PhaseDraining))
+		Expect(*get[*appsv1.Deployment](appName).Spec.Replicas).To(Equal(int32(2)), "the canary keeps running while clients catch up")
+
+		Eventually(func() bool {
+			markRolledOut(appName)
+			return *get[*appsv1.Deployment](appName).Spec.Replicas == 0 && get[*platformv1.CanaryRollout](appName).Status.Phase == platformv1.PhaseSucceeded
+		}, timeout, tick).Should(BeTrue(), "the canary is parked after the grace")
+		Expect(time.Since(flipped)).To(BeNumerically(">=", 2*time.Second), "parking waited for the drain grace")
 
 		cr := get[*platformv1.CanaryRollout](appName)
-		Expect(cr.Status.Phase).To(Equal(platformv1.PhaseSucceeded))
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisPass))
 		Expect(cr.Status.PromotedTemplateHash).To(Equal(templateHash(get[*appsv1.Deployment](appName).Spec.Template)))
 		Expect(meta.IsStatusConditionTrue(cr.Status.Conditions, platformv1.ConditionReady)).To(BeTrue())
