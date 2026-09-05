@@ -20,6 +20,8 @@ const (
 	labelTenantDatabase = "platform.internal/tenantdatabase"
 	labelOperation      = "platform.internal/operation"
 	annotationBackupID  = "platform.internal/backup-id"
+	labelComponent      = "app.kubernetes.io/component"
+	componentDatabase   = "database"
 
 	operationBackup  = "backup"
 	operationRestore = "restore"
@@ -41,6 +43,15 @@ func instanceLabels(tdb *platformv1.TenantDatabase) map[string]string {
 		"app.kubernetes.io/instance": tdb.Name,
 		labelTenantDatabase:          tdb.Name,
 	}
+}
+
+// databasePodLabels are what the Service selects. Jobs share the instance labels but not
+// the component, otherwise a running backup pod becomes a Service endpoint and a share of
+// connections to the database are refused by a pod that listens on nothing.
+func databasePodLabels(tdb *platformv1.TenantDatabase) map[string]string {
+	labels := instanceLabels(tdb)
+	labels[labelComponent] = componentDatabase
+	return labels
 }
 
 func storageQuantity(gb int32) resource.Quantity {
@@ -92,7 +103,7 @@ func desiredService(tdb *platformv1.TenantDatabase) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceName(tdb), Namespace: tdb.Namespace, Labels: instanceLabels(tdb)},
 		Spec: corev1.ServiceSpec{
-			Selector: instanceLabels(tdb),
+			Selector: databasePodLabels(tdb),
 			Ports:    []corev1.ServicePort{{Name: "postgres", Port: postgresPort}},
 		},
 	}
@@ -101,7 +112,7 @@ func desiredService(tdb *platformv1.TenantDatabase) *corev1.Service {
 // The data volume is a PVC the operator owns rather than a volumeClaimTemplate: templates
 // cannot be resized in place and their claims are not garbage-collected with the owner.
 func desiredStatefulSet(tdb *platformv1.TenantDatabase) *appsv1.StatefulSet {
-	labels := instanceLabels(tdb)
+	labels := databasePodLabels(tdb)
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: statefulSetName(tdb), Namespace: tdb.Namespace, Labels: labels},
 		Spec: appsv1.StatefulSetSpec{
@@ -159,6 +170,7 @@ func passwordEnv(tdb *platformv1.TenantDatabase) corev1.EnvVar {
 func desiredJob(tdb *platformv1.TenantDatabase, operation, backupID, script string) *batchv1.Job {
 	labels := instanceLabels(tdb)
 	labels[labelOperation] = operation
+	labels[labelComponent] = operation
 	pgPassword := passwordEnv(tdb)
 	pgPassword.Name = "PGPASSWORD"
 	return &batchv1.Job{
