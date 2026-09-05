@@ -1,0 +1,10 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kiln-dev
+# Shape used by the operator-integration CI job only. The operator test's subject is the
+# operator; on the five-node kind-config.yaml, cross-node ClusterIP connections were
+# intermittently reset on the CI runner's kernel while the endpoint was healthy, which is
+# not something that test should be sensitive to. Local development keeps the five-node
+# cluster, where the same test passes.
+nodes:
+  - role: control-plane
