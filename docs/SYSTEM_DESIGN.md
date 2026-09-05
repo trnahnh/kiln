@@ -56,12 +56,15 @@ Decisions that shaped the Phase 2 implementation: [ADR-0005](decisions/0005-data
 
 **Purpose:** canary rollout for any deployment made through the platform, with automatic rollback based on live metrics.
 
-**Stack:** Go, Istio or Linkerd (traffic shifting), Prometheus (metric source), custom CRD for rollout config.
+**Stack:** Go, Istio in sidecar mode (traffic shifting through a weighted VirtualService), Prometheus (metric source, Istio's destination-reported request counters and latency histogram), `CanaryRollout` CRD for rollout config.
 
 **Design problems:**
 
-- **Statistical rollback decision.** A raw error-rate threshold false-triggers on noisy-but-healthy canaries and under-reacts to slow-building real regressions. Solved with a minimum sample size gate plus a statistical significance check before any rollback fires.
-- **Traffic-shift step sizing.** Fixed percentage steps are naive. Step size shrinks as confidence in the canary grows and widens back out on any anomaly.
+- **Statistical rollback decision.** A raw error-rate threshold false-triggers on noisy-but-healthy canaries and under-reacts to slow-building real regressions, and a significance test re-run at every analysis interval inflates its own false-positive rate with every look. Solved with a minimum sample size gate plus a sequential probability ratio test per criterion (error rate, and the fraction of requests slower than the p99 limit), whose per-window evidence is capped so neither one burst nor one quiet window can decide a rollout. Rollback evidence accumulates for the whole rollout as a CUSUM, so slow-building regressions still cross the bound; acceptance is re-earned on fresh samples at every checkpoint.
+- **Traffic-shift step sizing.** Fixed percentage steps are naive. `stepPercentages` are checkpoints that must each be accepted; between them the canary weight is the checkpoint plus the confidence earned so far times the distance to the next, so sub-steps grow as confidence grows, and a window whose evidence moved toward the regression hypothesis holds traffic and halves the next sub-step. The first checkpoint is entered outright because no traffic means no evidence.
+- **Ground truth.** The controller never trusts its own status. What proves a rollback is the VirtualService's weights, the canary pods being gone and primary pods still on the old template, and real requests through the mesh returning healthy again.
+
+**Rollout model.** The user's Deployment is the canary and always holds the desired version; the controller owns a `<name>-primary` Deployment that serves stable traffic, the `<name>-primary` and `<name>-canary` Services, and the VirtualService on the user's own Service host. A change to the target's pod template starts a rollout, the accepted template is copied onto primary at the end, and the target is parked at zero replicas while idle or after a rollback. Decisions: [ADR-0011](decisions/0011-istio-virtualservice-is-the-canary-traffic-router.md) (Istio and the VirtualService router), [ADR-0013](decisions/0013-the-target-deployment-is-the-canary-and-the-controller-owns-primary.md) (primary ownership and the rollout trigger), [ADR-0014](decisions/0014-sequential-probability-ratio-test-decides-rollback.md) (the sequential test, its bounds and defaults, and confidence-sized sub-steps). The CRD is delivered with the rest of the platform per [ADR-0012](decisions/0012-platform-app-delivers-every-module-crd.md).
 
 ## 5. Chaos and resilience scoring module
 

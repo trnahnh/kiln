@@ -82,26 +82,56 @@ The claim is a namespaced Crossplane v2 composite resource ([ADR-0005](decisions
 
 ## CanaryRollout CRD
 
-Owned by the Progressive delivery controller.
+Owned by the Progressive delivery controller. Namespaced; one per Deployment. The Deployment named by `targetDeployment` is the canary and must sit behind a Service of the same name; the controller creates `<name>-primary` (Deployment and Service), `<name>-canary` (Service) and the Istio VirtualService, all owned by the CR ([ADR-0013](decisions/0013-the-target-deployment-is-the-canary-and-the-controller-owns-primary.md)). A change to the target's pod template starts a rollout.
 
 ```yaml
 apiVersion: platform.internal/v1
 kind: CanaryRollout
 metadata:
   name: checkout-service-rollout
+  namespace: team-checkout
 spec:
   targetDeployment: checkout-service
-  metricProvider: prometheus
+  metricProvider: prometheus      # the only provider; Istio's destination-reported metrics
   successCriteria:
-    errorRateMax: 0.01
-    latencyP99MaxMs: 300
-    minSampleSize: 500
-  stepPercentages: [5, 20, 50, 100]
+    errorRateMax: 0.01            # null hypothesis of the error-rate test
+    latencyP99MaxMs: 300          # null hypothesis: at most 1% of requests slower than this
+    minSampleSize: 500            # requests since the current checkpoint before any decision
+  stepPercentages: [5, 20, 50, 100]   # ascending checkpoints ending at 100
+  analysis:                       # optional; defaults shown (ADR-0014)
+    interval: 15s                 # how often metrics are read and the test advanced
+    maxStepDuration: 30m          # an undecided checkpoint rolls back after this
+    alpha: 0.05                   # false-rollback ceiling
+    beta: 0.1                     # missed-regression ceiling at the regression magnitude
+    regressionFactor: 2           # alternative hypothesis = this multiple of the limit
 status:
-  phase: Analyzing        # Progressing | Analyzing | Promoting | RolledBack | Succeeded
-  currentStep: 1
-  lastAnalysisResult: Pass
+  phase: Analyzing        # Initializing | Progressing | Analyzing | Promoting | RolledBack | Succeeded
+  currentStep: 1          # 1-based index of the last checkpoint reached
+  canaryWeight: 12        # mirrors the VirtualService; informational, never the proof
+  lastAnalysisResult: Pending   # Pending | Pass | Fail
+  reason: Analyzing       # terminal: Promoted | RegressionDetected | Inconclusive | MetricsUnavailable | CanaryUnavailable
+  targetReplicas: 3       # what the target had before being parked at zero
+  observedTemplateHash: 9a23219f06d5f0d2
+  promotedTemplateHash: 1c1d1f6e5c0a4e83
+  analysis:               # persisted test state so a restarted controller resumes
+    checkpoint: 1
+    errors:   {cumulative: 0.42, sinceCheckpoint: -1.9}
+    latency:  {cumulative: 0,    sinceCheckpoint: -2.3}
+    samplesSinceCheckpoint: 640
+    totalSamples: 2210
+    confidence: 0.84
+    shrink: 0
+    anomalies: 1
+    checkpointStartedAt: "2026-09-05T18:24:28Z"
+    lastTickAt: "2026-09-05T18:25:13Z"
+    lastCounters: {requests: 2210, errors: 4, slow: 1, at: "2026-09-05T18:25:13Z"}
+  conditions:             # Ready (True only when idle on a promoted version), Progressing
+    - type: Ready
+      status: "False"
+      reason: Analyzing
 ```
+
+Phases: `Initializing` clones primary and parks the target; `Succeeded` and `RolledBack` are idle, all traffic on primary, target at zero replicas; `Progressing` waits for the canary pods and a baseline metric snapshot; `Analyzing` runs the sequential test every `interval`; `Promoting` copies the accepted template onto primary and hands traffic back. Labels the controller manages: `platform.internal/canary-role` (`primary` or `canary`, on pod templates and Service selectors) and `platform.internal/canary-rollout` (the CR name). Events: `RolloutStarted`, `TrafficShifted`, `Promoting`, `Promoted`, and a Warning `RolledBack` carrying the reason and criterion.
 
 ## ChaosExperiment CRD
 

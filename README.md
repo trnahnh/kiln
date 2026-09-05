@@ -18,7 +18,7 @@ Full problem writeup and the baseline this platform is measured against: [`docs/
 | Provisioning / GitOps | Translates a request into real cloud resources, deployed declaratively through Git | Crossplane, ArgoCD, Terraform |
 | Policy | Validates every request against org rules before it reaches the operator | OPA, Kyverno |
 | Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing | Go, Kubernetes scheduler framework |
-| Progressive delivery | Canary rollout with automatic, statistically-gated rollback | Go, Istio or Linkerd |
+| Progressive delivery | Canary rollout with automatic, statistically-gated rollback | Go, Istio, Prometheus |
 | Chaos / resilience | On-demand controlled failure injection with an automated SLO-based score | Go, OpenTelemetry, tc/iptables |
 | Audit / RBAC | Tamper-evident audit trail and access control in front of the whole platform | Java, Spring Boot, Kafka, PostgreSQL |
 
@@ -86,13 +86,14 @@ kubectl patch storageclass standard -p '{"allowVolumeExpansion":true}'
 # 2. Stand up observability
 kubectl apply -f gitops/observability/
 
-# 3. Build the cost-aware scheduler image and hand it to kind; ArgoCD deploys it but
-#    never pulls it
+# 3. Build the cost-aware scheduler and the delivery controller images and hand them
+#    to kind; ArgoCD deploys them but never pulls them
 make -C scheduler-plugin docker-build kind-load
+make -C delivery-controller docker-build kind-load
 
-# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase CRD, Crossplane,
-#    Kyverno, the kiln-scheduler, the DatabaseClaim composition, the admission
-#    policies and tenant claims
+# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase and CanaryRollout CRDs,
+#    Crossplane, Kyverno, Istio, the kiln-scheduler, the delivery controller, the
+#    DatabaseClaim composition, the admission policies and tenant claims
 kubectl apply -k gitops/argocd/install --server-side
 kubectl -n argocd rollout status statefulset/argocd-application-controller
 kubectl apply -f gitops/argocd/root.yaml
@@ -104,6 +105,8 @@ cd operator && make run
 Pods opt into cost-aware placement with `schedulerName: kiln-scheduler` and declare their class with the `kiln.platform.internal/workload-class` label; see `docs/API_REFERENCE.md`.
 
 Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/`; the org rules it must satisfy live in `gitops/policies`.
+
+Roll a Deployment out as a canary by labelling its namespace `istio-injection=enabled`, giving it a Service of the same name, and creating a `CanaryRollout` that names it; every later change to its pod template is analysed and either promoted or rolled back. Schema in `docs/API_REFERENCE.md`.
 
 Note for Windows hosts: `crossplane render` (the offline composition check in `docs/TESTING.md`) has no Windows build and needs Docker. Locally it only works from WSL running as root with `DOCKER_HOST=unix:///mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.proxy.sock`. CI runs it natively on Linux with no such requirement.
 
