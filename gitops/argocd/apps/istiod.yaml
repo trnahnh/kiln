@@ -17,6 +17,8 @@ spec:
       releaseName: istiod
       valuesObject:
         pilot:
+          # No metrics-server on kind: an HPA without metrics reads as Degraded forever.
+          autoscaleEnabled: false
           resources:
             requests:
               cpu: 100m

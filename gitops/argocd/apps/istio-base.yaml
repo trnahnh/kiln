@@ -17,6 +17,14 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: istio-system
+  # istiod takes over the default validator: it installs the CA bundle and flips the
+  # failure policy to Fail once it is serving, so the chart-rendered values are never live.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
   # Istio's CRDs exceed the client-side apply annotation limit; server-side apply is the
   # supported install path.
   syncPolicy:
@@ -26,6 +34,7 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
     retry:
       limit: 10
       backoff:
