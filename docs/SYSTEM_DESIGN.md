@@ -24,7 +24,7 @@
 - **Concurrency.** A scale-up event arriving while a backup is in progress must be serialized safely, not raced. Solved with a status-driven state machine with explicit phase transitions (`Provisioning`, `Ready`, `Backing Up`, `Restoring`, `Failed`); conflicting operations are rejected, not interleaved.
 - **Partial failure.** A PVC created but the StatefulSet creation failing must not leave orphaned cloud resources. Solved with finalizers and owner references so garbage collection is automatic on delete, plus a periodic reconcile sweep that catches drift.
 
-See [`API_REFERENCE.md`](API_REFERENCE.md#tenantdatabase-crd) for the full CRD schema.
+See [`API_REFERENCE.md`](API_REFERENCE.md#tenantdatabase-crd) for the full CRD schema. Decisions that shaped the Phase 1 implementation: [ADR-0002](decisions/0002-one-shot-actions-via-annotations.md) (backup/restore triggered by annotations), [ADR-0003](decisions/0003-scale-is-storage-growth-inside-ready.md) (scaling is storage growth within `Ready`), [ADR-0004](decisions/0004-backups-as-operator-fired-jobs-on-owned-pvc.md) (operator-fired backup Jobs onto an owned volume).
 
 ## 2. Provisioning and GitOps layer
 

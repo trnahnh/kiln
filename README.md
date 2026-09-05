@@ -105,4 +105,4 @@ Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`
 
 ## Status
 
-Currently in Phase 0 (foundation). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
+Phases 0 (foundation) and 1 (operator) are complete; Phase 2 (policy and GitOps) is next. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
