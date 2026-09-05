@@ -53,9 +53,9 @@ type Pod struct {
 // Weights are percentages summing to 100; see SYSTEM_DESIGN.md section 3 for why cost
 // leads and preemption trails.
 type Weights struct {
-	Cost          int64
-	Fragmentation int64
-	Preemption    int64
+	Cost          int64 `json:"cost"`
+	Fragmentation int64 `json:"fragmentation"`
+	Preemption    int64 `json:"preemption"`
 }
 
 func DefaultWeights() Weights {
