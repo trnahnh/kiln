@@ -1,0 +1,13 @@
+# Input for `crossplane render` (TESTING.md, Provisioning/GitOps unit tests).
+apiVersion: platform.internal/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: checkout-db
+  namespace: team-checkout
+spec:
+  parameters:
+    tier: standard
+    storageGB: 20
+    tags:
+      team: checkout
+      costCenter: eng-platform
