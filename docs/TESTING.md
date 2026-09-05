@@ -9,8 +9,8 @@ General principle across every subsystem: business/decision logic is isolated fr
 
 ## Provisioning/GitOps
 
-- **Unit tests:** Crossplane composition rendering tested with `crossplane render` against fixed input parameters, asserting the exact resource set produced.
-- **Integration tests:** ArgoCD sync tested against a disposable preview cluster in CI; drift is introduced manually in the test and the expected detection/heal behavior is asserted per resource class.
+- **Unit tests:** Crossplane composition rendering tested with `crossplane render` against `gitops/compositions/examples/databaseclaim.yaml`, asserting the composed `TenantDatabase` carries the platform defaults, the requested storage, and the tag labels (CI job `gitops-unit`; locally the CLI needs Linux and Docker, so run it in WSL). The admission rules are tested offline with `kyverno test gitops/policies/tests`: one good and one at-ceiling claim pass, every violation class fails, and the direct `TenantDatabase` ceiling is covered both ways.
+- **Integration tests:** `TestPhase2PolicyAndGitOps` in the `e2e/` module (build tag `e2e`) runs against a cluster bootstrapped from `gitops/argocd` (CI job `platform-e2e`). It reads the Kyverno webhook's `failurePolicy` from the cluster, applies violating claims and a violating `TenantDatabase` directly and asserts nothing exists afterwards, then pushes a throwaway branch `e2e/<run>` of this repository holding one valid and one violating claim and points temporary ArgoCD Applications at it: the valid claim must become a `TenantDatabase` with the composed spec, the violating one must fail the sync at admission with no object created. Drift is then introduced live: a claim edit must show OutOfSync and stay unreverted (stateful class), and weakening a policy's `validationActions` must be reverted by selfHeal (stateless class). The branch and Applications are removed at the end.
 
 ## Scheduler plugin
 
