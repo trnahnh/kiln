@@ -78,7 +78,7 @@ jobs:
           cache-dependency-path: operator/go.sum
       - uses: helm/kind-action@v1
         with:
-          config: kind-config-operator.yaml
+          config: kind-config.yaml
           cluster_name: kiln-dev
       - run: make test-integration
         working-directory: operator
