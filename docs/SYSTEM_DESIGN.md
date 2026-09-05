@@ -37,6 +37,8 @@ See [`API_REFERENCE.md`](API_REFERENCE.md#tenantdatabase-crd) for the full CRD s
 - **Golden-path abstraction boundary.** A developer should be able to request "a standard Postgres database" without specifying instance class, backup retention, or network placement, those are platform defaults. Advanced users need an escape hatch. Solved with tiered Composition Functions: a `standard` tier with sane defaults, and a `custom` tier that exposes the underlying knobs.
 - **Drift detection.** If someone manually changes a cloud resource outside of Git, ArgoCD must detect it. Policy differs per resource class: auto-heal for anything stateless, flag-and-alert for anything stateful (never auto-revert a live database change without a human in the loop).
 
+Decisions that shaped the Phase 2 implementation: [ADR-0005](decisions/0005-databaseclaim-is-a-namespaced-crossplane-v2-xr.md) (the claim is a namespaced Crossplane v2 composite composing the `TenantDatabase` directly), [ADR-0006](decisions/0006-org-rules-as-fail-closed-kyverno-validating-policies.md) (fail-closed Kyverno ValidatingPolicies on claim and `TenantDatabase`), [ADR-0007](decisions/0007-argocd-bootstraps-the-platform-with-drift-policy-per-application.md) (ArgoCD app-of-apps bootstrap, drift policy per Application class).
+
 ## 3. Cost/GPU-aware scheduler plugin
 
 **Purpose:** place workload pods with a scoring function that accounts for cost and fragmentation, not just default bin packing.

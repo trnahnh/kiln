@@ -91,7 +91,15 @@ make run
 
 # 4. Stand up observability
 kubectl apply -f gitops/observability/
+
+# 5. Bootstrap ArgoCD; from here Git installs Crossplane, Kyverno, the
+#    DatabaseClaim composition, the admission policies and tenant claims
+kubectl apply -k gitops/argocd/install --server-side
+kubectl -n argocd rollout status statefulset/argocd-application-controller
+kubectl apply -f gitops/argocd/root.yaml
 ```
+
+Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/`; the org rules it must satisfy live in `gitops/policies`.
 
 Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
