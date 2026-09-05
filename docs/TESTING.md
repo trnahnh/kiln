@@ -14,8 +14,16 @@ General principle across every subsystem: business/decision logic is isolated fr
 
 ## Scheduler plugin
 
-- **Unit tests:** the scoring function is pure (no cluster I/O) and tested in isolation against synthetic cluster states, covering the cost/fragmentation/preemption-risk tradeoff explicitly, including edge cases (all nodes spot, no spot capacity available, latency-sensitive workload present).
-- **Performance tests:** `scheduler_perf` benchmarks for placement latency under load, to confirm the custom scoring doesn't degrade scheduling throughput.
+- **Unit tests:** the scoring function is pure (no cluster I/O) in `scheduler-plugin/internal/scoring` and tested in isolation against synthetic cluster states, covering the cost/fragmentation/preemption-risk tradeoff explicitly, including the edge cases: all nodes spot (a latency-sensitive pod is unschedulable rather than placed), no spot capacity (equal costs leave fragmentation to decide), latency-sensitive workload present (spot nodes filtered before scoring), the cheap-spot-wins-even-at-maximal-risk case that pins the weighting, GPU stranding, and score bounds. `internal/pricing` covers the node-label contract and the AWS source against fakes; `internal/plugin` covers the framework adapter (Filter, PreScore, Score, args). Run with `make test` in `scheduler-plugin/`.
+- **Performance tests:** upstream `scheduler_perf` is not importable, so `scheduler-plugin/test/perf` (build tag `perf`, `make bench`) reproduces its method: a real kube-apiserver from envtest, the real scheduler in-process with a default profile and the kiln profile side by side, 200 synthetic nodes, a burst of 500 pods per profile, and creation-to-bind latency measured through a watch. It reports p50, p99 and pods/s for both profiles so any degradation from the custom scoring is a number, alongside `BenchmarkScore` for the pure function at 100/1000/5000 nodes.
+- **Exit-criterion replay:** `TestPhase3SchedulerCostReduction` in the `e2e/` module (build tag `e2e`, CI job `platform-e2e`) builds one seeded trace of 60 pods (20% latency-sensitive, 40% standard, 40% batch, three sizes, 30 to 60 second sleeps, two-second arrivals) and replays it first through `default-scheduler` and then through `kiln-scheduler` on the same five-node kind cluster. Each run is billed from the API server's record alone: every pod's node and its container's actual start and finish times, merged per node, so a node is charged its hourly-cost label for every second it hosts at least one trace pod (node-occupancy instance-hours, `METRICS.md`). The test asserts kiln-scheduler bills strictly less than the default and that no latency-sensitive pod ran on a spot node, and logs the percentage. The plugin's own score is never read.
+- **Manual validation, outside CI:** the AWS price source is tested against fakes. To confirm the fakes still mirror the real APIs, run once locally with AWS credentials in the standard credential chain (a few read-only `DescribeSpotPriceHistory` calls and one public S3 fetch, trivial cost):
+
+  ```
+  cd scheduler-plugin && go test -tags=liveaws ./internal/pricing/aws/ -run Live -v
+  ```
+
+  It is excluded from every default `go test` invocation, never runs in CI, and is not part of Phase 3's exit criterion.
 
 ## Progressive delivery controller
 
