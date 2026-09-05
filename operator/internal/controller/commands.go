@@ -25,7 +25,7 @@ type PostgresCommands struct{}
 const scriptPrologue = `set -u
 run() {
   step="$1"; shift
-  if "$@" 2>/tmp/kiln-step.err; then return 0; fi
+  "$@" 2>/tmp/kiln-step.err && return 0
   rc=$?
   echo "kiln: step \"$step\" ($*) failed with exit $rc" >&2
   while IFS= read -r line; do echo "kiln: $line" >&2; done </tmp/kiln-step.err
