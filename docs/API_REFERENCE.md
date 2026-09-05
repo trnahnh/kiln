@@ -24,7 +24,35 @@ status:
       lastTransitionTime: "2026-09-01T02:58:11Z"
 ```
 
-**Phase transitions:** `Provisioning -> Ready`, `Ready -> Backing Up -> Ready`, `Ready -> Restoring -> Ready`, any phase `-> Failed` on unrecoverable error. Transitions are enforced by the reconciler's state machine; a conflicting transition (e.g. a scale request arriving mid-`Backing Up`) is rejected and requeued, never interleaved.
+**Phase transitions:** `Provisioning -> Ready`, `Ready -> Backing Up -> Ready`, `Ready -> Restoring -> Ready`, any phase `-> Failed` on unrecoverable error. Transitions are enforced by the reconciler's state machine; a conflicting transition (e.g. a scale request arriving mid-`Backing Up`) is rejected and requeued, never interleaved. `Failed` is terminal: recovery is delete and recreate. A failed backup is not unrecoverable and returns to `Ready`; a failed restore is and goes to `Failed`.
+
+**Validation:** `engine` and `version` are immutable; `storageGB` may grow but never shrink; `tier` defaults to `standard`; `backupSchedule` is optional (empty disables scheduled backups). `engine: redis` is accepted by the schema and sent to `Failed` with reason `UnsupportedEngine` until a Redis implementation lands.
+
+**Scaling** is growth of `storageGB` ([ADR-0003](decisions/0003-scale-is-storage-growth-inside-ready.md)). The phase stays `Ready`; the `Ready` condition is `False` with reason `Scaling` until the volume resize settles, and `status.observedGeneration` catches up to `metadata.generation` once the spec is fully applied.
+
+**One-shot actions** are requested with annotations, consumed by the operator when the Job starts ([ADR-0002](decisions/0002-one-shot-actions-via-annotations.md)):
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `platform.internal/backup` | `now` | `Ready -> Backing Up`; runs a `pg_dump` Job. |
+| `platform.internal/restore-from` | `<backupID>` or `latest` | `Ready -> Restoring`; runs a `pg_restore` Job from that dump. A backup ID is the UTC timestamp `YYYYMMDDTHHMMSSZ` recorded in `status.lastBackupTime`. |
+
+Both are accepted only from `Ready` with the `Ready` condition `True`; otherwise they stay on the object and `Progressing` reports `RECONCILE_CONFLICT` until they can run.
+
+**Conditions:** `Ready` (database available; reasons `Provisioning`, `Scaling`, `Reconciled`, `UnsupportedEngine`, `ProvisionFailed`, `RestoreFailed`) and `Progressing` (work in flight or its last outcome; reasons `Provisioning`, `Scaling`, `ScaleFailed`, `BackingUp`, `Restoring`, `Reconciled`, `BackupFailed`, `RestoreFailed`, `RECONCILE_CONFLICT`). A `RECONCILE_CONFLICT` also emits one Warning event per conflict episode.
+
+**Operator-managed resources** in the CR's namespace, all with a controller owner reference to it ([ADR-0004](decisions/0004-backups-as-operator-fired-jobs-on-owned-pvc.md)):
+
+| Resource | Name | Purpose |
+|---|---|---|
+| Secret | `<name>-credentials` | `POSTGRES_PASSWORD` for the `postgres` superuser. |
+| Service | `<name>` | ClusterIP on 5432. |
+| StatefulSet | `<name>` | One `postgres:<version>` pod; pod `<name>-0`. |
+| PersistentVolumeClaim | `<name>-data` | Data volume, sized by `storageGB`. |
+| PersistentVolumeClaim | `<name>-backups` | Dump files named `<backupID>.dump`. |
+| Job | `<name>-backup-<id>`, `<name>-restore-<id>` | One per operation; labels `platform.internal/tenantdatabase`, `platform.internal/operation`. |
+
+Deleting the `TenantDatabase` garbage-collects all of them, backups included.
 
 ## Provisioning claim (Crossplane Composite Resource)
 
