@@ -302,12 +302,31 @@ func (h *harness) expectJobSucceeded(job *batchv1.Job) {
 			}
 		}
 	}
-	events, err := h.clientset.CoreV1().Events(job.Namespace).List(h.ctx, metav1.ListOptions{})
+	// Cluster-wide, because pressure on the node hosting the Job shows up as Node events in
+	// the default namespace and as conditions, not in the test namespace.
+	events, err := h.clientset.CoreV1().Events("").List(h.ctx, metav1.ListOptions{})
 	if err == nil {
 		for _, e := range events.Items {
 			if e.Type == corev1.EventTypeWarning {
-				h.t.Logf("warning event %s/%s: %s %s", e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+				h.t.Logf("warning event %s %s/%s at %s: %s %s", e.InvolvedObject.Kind, e.InvolvedObject.Namespace, e.InvolvedObject.Name, e.LastTimestamp.Format("15:04:05"), e.Reason, e.Message)
 			}
+		}
+	}
+	nodes := &corev1.NodeList{}
+	if h.k8s.List(h.ctx, nodes) == nil {
+		for _, n := range nodes.Items {
+			for _, c := range n.Status.Conditions {
+				if c.Status == corev1.ConditionTrue && c.Type != corev1.NodeReady {
+					h.t.Logf("node %s condition %s=%s: %s", n.Name, c.Type, c.Status, c.Message)
+				}
+			}
+			h.t.Logf("node %s allocatable cpu=%s memory=%s ephemeral=%s", n.Name, n.Status.Allocatable.Cpu(), n.Status.Allocatable.Memory(), n.Status.Allocatable.StorageEphemeral())
+		}
+	}
+	db := &corev1.Pod{}
+	if get := h.k8s.Get(h.ctx, types.NamespacedName{Namespace: job.Namespace, Name: job.Labels["platform.internal/tenantdatabase"] + "-0"}, db); get == nil {
+		for _, cs := range db.Status.ContainerStatuses {
+			h.t.Logf("database pod %s on %s: ready=%v restarts=%d state=%+v last=%+v", db.Name, db.Spec.NodeName, cs.Ready, cs.RestartCount, cs.State, cs.LastTerminationState)
 		}
 	}
 	h.t.Fatalf("backup Job %s must succeed", job.Name)
