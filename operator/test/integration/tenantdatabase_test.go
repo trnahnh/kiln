@@ -305,7 +305,7 @@ func (h *harness) count(tdb *platformv1.TenantDatabase) int {
 // from the test host.
 func (h *harness) sql(tdb *platformv1.TenantDatabase, statement string) (string, error) {
 	req := h.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").Namespace(tdb.Namespace).Name(tdb.Name + "-0").
+		Resource("pods").Namespace(tdb.Namespace).Name(tdb.Name+"-0").
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "postgres",
