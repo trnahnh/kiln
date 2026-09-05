@@ -132,7 +132,7 @@ func TestTenantDatabaseLifecycle(t *testing.T) {
 
 	t.Log("backup completes, then the deferred scale applies")
 	g.Eventually(func() bool { return h.jobFinished(job) }, jobTimeout, poll).Should(BeTrue())
-	g.Expect(h.jobSucceeded(job)).To(BeTrue(), "backup Job must succeed")
+	h.expectJobSucceeded(job)
 	g.Eventually(h.phase(tdb), time.Minute, poll).Should(Equal(platformv1.PhaseReady))
 	g.Eventually(func() string { return h.pvcSize(tdb) }, time.Minute, poll).Should(Equal("2Gi"))
 	g.Eventually(func() bool {
@@ -279,6 +279,38 @@ func (h *harness) jobSucceeded(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+// expectJobSucceeded dumps the Job's pods and their logs on failure, so a CI-only failure
+// (image pull, eviction, connection refused) explains itself instead of leaving a bool.
+func (h *harness) expectJobSucceeded(job *batchv1.Job) {
+	if h.jobSucceeded(job) {
+		return
+	}
+	pods, err := h.clientset.CoreV1().Pods(job.Namespace).List(h.ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	if err == nil {
+		for _, p := range pods.Items {
+			h.t.Logf("job %s pod %s on %s: phase=%s reason=%q message=%q", job.Name, p.Name, p.Spec.NodeName, p.Status.Phase, p.Status.Reason, p.Status.Message)
+			for _, cs := range p.Status.ContainerStatuses {
+				h.t.Logf("  container %s: %+v", cs.Name, cs.State)
+			}
+			raw, err := h.clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &corev1.PodLogOptions{}).DoRaw(h.ctx)
+			if err != nil {
+				h.t.Logf("  logs unavailable: %v", err)
+			} else {
+				h.t.Logf("  logs:\n%s", string(raw))
+			}
+		}
+	}
+	events, err := h.clientset.CoreV1().Events(job.Namespace).List(h.ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, e := range events.Items {
+			if e.Type == corev1.EventTypeWarning {
+				h.t.Logf("warning event %s/%s: %s %s", e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+			}
+		}
+	}
+	h.t.Fatalf("backup Job %s must succeed", job.Name)
 }
 
 func (h *harness) eventCount(reason string) int {
