@@ -20,6 +20,30 @@ jobs:
       - name: generated files are committed
         run: git diff --exit-code
 
+  scheduler-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: scheduler-plugin/go.mod
+          cache-dependency-path: scheduler-plugin/go.sum
+      - run: make test
+        working-directory: scheduler-plugin
+
+  scheduler-perf:
+    runs-on: ubuntu-latest
+    needs: scheduler-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: scheduler-plugin/go.mod
+          cache-dependency-path: scheduler-plugin/go.sum
+      - name: placement latency, default profile vs kiln profile
+        run: make bench
+        working-directory: scheduler-plugin
+
   gitops-unit:
     runs-on: ubuntu-latest
     steps:
@@ -61,7 +85,7 @@ jobs:
 
   platform-e2e:
     runs-on: ubuntu-latest
-    needs: gitops-unit
+    needs: [gitops-unit, scheduler-unit]
     permissions:
       contents: write
     steps:
@@ -70,15 +94,19 @@ jobs:
         with:
           go-version-file: e2e/go.mod
           cache-dependency-path: e2e/go.sum
+      - name: build the kiln-scheduler image
+        run: make docker-build
+        working-directory: scheduler-plugin
       - uses: helm/kind-action@v1
         with:
           config: kind-config.yaml
           cluster_name: kiln-dev
-      - name: bootstrap argocd and the app of apps
+      - name: load the scheduler image and bootstrap argocd
         run: |
+          make -C scheduler-plugin kind-load
           kubectl apply -k gitops/argocd/install --server-side
           kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
           kubectl apply -f gitops/argocd/root.yaml
-      - run: go test -tags=e2e ./... -v -count=1 -timeout 40m
+      - run: go test -tags=e2e ./... -v -count=1 -timeout 60m
         working-directory: e2e
