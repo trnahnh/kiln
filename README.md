@@ -78,8 +78,10 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 Prerequisites: `kind`, `kubectl`, Go 1.26+, Java 21+, Docker.
 
 ```bash
-# 1. Bring up a local cluster
+# 1. Bring up a local cluster; kind's default StorageClass must allow the
+#    volume growth that TenantDatabase scaling relies on
 kind create cluster --config kind-config.yaml
+kubectl patch storageclass standard -p '{"allowVolumeExpansion":true}'
 
 # 2. Install the TenantDatabase CRD
 cd operator && make install
