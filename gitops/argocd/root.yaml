@@ -1,0 +1,21 @@
+# App of apps: apply this once after the install/ kustomization; Git owns the rest (ADR-0007).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiln
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/trnahnh/kiln.git
+    targetRevision: main
+    path: gitops/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,31 @@
+# Stateful tenant requests: drift is flagged (OutOfSync), never reverted or pruned without
+# a human (SYSTEM_DESIGN section 2, ADR-0007).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiln-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/trnahnh/kiln.git
+    targetRevision: main
+    path: gitops/tenants
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 20
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
