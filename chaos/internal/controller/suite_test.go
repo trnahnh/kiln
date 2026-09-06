@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/chaos/api/v1"
 	"github.com/trnahnh/kiln/chaos/internal/agent"
 	"github.com/trnahnh/kiln/chaos/internal/fault"
@@ -43,6 +44,7 @@ var (
 	source    = &fakeSource{}
 	injector  = &fakeInjector{}
 	ledgerDir string
+	auditLog  = &audit.Recorder{}
 )
 
 // fakeSource plays Prometheus, per namespace so concurrent experiments in the suite do not
@@ -186,6 +188,7 @@ var _ = BeforeSuite(func() {
 		Recorder: mgr.GetEventRecorderFor("chaos-controller"),
 		Metrics:  source,
 		LeaseTTL: 1500 * time.Millisecond,
+		Audit:    auditLog,
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	Expect((&agent.Reconciler{

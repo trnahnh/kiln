@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/chaos/api/v1"
 	"github.com/trnahnh/kiln/slo"
 )
@@ -26,6 +27,30 @@ func freshNamespace() string {
 	name := fmt.Sprintf("chaos-%d", nsCounter)
 	Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}})).To(Succeed())
 	return name
+}
+
+// auditOutcomes lists the outcomes published about one experiment, in order, with their
+// eventIds so a transition reconciled twice is still one entry.
+func auditOutcomes(ns, name string) func() []string {
+	resource := audit.ResourceRef("ChaosExperiment", ns, name)
+	return func() []string {
+		var out []string
+		for _, e := range auditLog.Events() {
+			if e.Resource == resource {
+				out = append(out, e.Details["outcome"].(string)+"@"+e.EventID)
+			}
+		}
+		return out
+	}
+}
+
+func auditEvent(ns, name, outcome string) audit.Event {
+	for _, e := range auditLog.Events() {
+		if e.Resource == audit.ResourceRef("ChaosExperiment", ns, name) && e.Details["outcome"] == outcome {
+			return e
+		}
+	}
+	return audit.Event{}
 }
 
 var _ = Describe("ChaosExperiment", func() {
@@ -66,6 +91,15 @@ var _ = Describe("ChaosExperiment", func() {
 			Eventually(func() bool { return injector.wasReverted(ns, pod) }, timeout, tick).Should(BeTrue(), "fault on %s not reverted", pod)
 		}
 		Eventually(func() []string { return injector.appliedPods(ns) }, timeout, tick).Should(BeEmpty())
+
+		Eventually(auditOutcomes(ns, "healthy"), timeout, tick).Should(HaveLen(2))
+		started := auditEvent(ns, "healthy", "Started")
+		Expect(started.Actor).To(Equal("system:chaos-controller"))
+		Expect(started.Details["faultType"]).To(Equal("latency-injection"))
+		Expect(started.Details["targets"]).To(Equal(2))
+		completed := auditEvent(ns, "healthy", "Completed")
+		Expect(completed.Details["resilienceScore"]).To(Equal(*cr.Status.ResilienceScore))
+		Expect(completed.EventID).To(Equal(audit.DeterministicID(completed.Resource, audit.ActionChaosExperiment, "Completed", string(cr.UID))))
 	})
 
 	It("aborts on a forced SLO breach and the agent reverts within the lease", func() {
@@ -89,6 +123,11 @@ var _ = Describe("ChaosExperiment", func() {
 			Eventually(func() bool { return injector.wasReverted(ns, pod) }, timeout, tick).Should(BeTrue(), "%s still faulted after abort", pod)
 		}
 		Eventually(func() []string { return injector.appliedPods(ns) }, timeout, tick).Should(BeEmpty())
+
+		Eventually(auditOutcomes(ns, "breach"), timeout, tick).Should(HaveLen(2))
+		aborted := auditEvent(ns, "breach", "Aborted")
+		Expect(aborted.Details["abortReason"]).To(Equal(string(platformv1.ReasonSLOBreach)))
+		Expect(aborted.Details["resilienceScore"]).To(Equal(0.0))
 	})
 
 	It("aborts rather than scoring a run whose fault could not be injected", func() {

@@ -2,6 +2,7 @@ FROM golang:1.26 AS builder
 ENV GOWORK=off
 WORKDIR /workspace
 COPY slo/ slo/
+COPY audit/ audit/
 COPY chaos/go.mod chaos/go.sum chaos/
 RUN cd chaos && go mod download
 COPY chaos/ chaos/
