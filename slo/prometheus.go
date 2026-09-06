@@ -1,6 +1,6 @@
-// Package metrics reads canary request counters from Prometheus. The controller feeds the
-// per-window deltas to the analysis; nothing here decides anything.
-package metrics
+// Package slo reads a workload's request counters from Istio's standard metrics in
+// Prometheus. Controllers turn two snapshots into a window and decide; nothing here decides.
+package slo
 
 import (
 	"context"
@@ -12,17 +12,27 @@ import (
 	"sort"
 	"strconv"
 	"time"
+)
 
-	"github.com/trnahnh/kiln/delivery-controller/internal/analysis"
+// Reporter selects which sidecar's view of a request is read. The destination sidecar
+// counts every request that reached the workload; the source sidecar counts what the
+// caller experienced, including network delay and connections that never got a response.
+type Reporter string
+
+const (
+	ReporterDestination Reporter = "destination"
+	ReporterSource      Reporter = "source"
 )
 
 type Target struct {
 	Namespace    string
 	Workload     string
 	LatencyMaxMs float64
+	// Empty means destination.
+	Reporter Reporter
 }
 
-// Counters are cumulative since the workload's sidecars started, summed over its pods.
+// Counters are cumulative since the reporting sidecars started, summed over their pods.
 type Counters struct {
 	Requests float64
 	Errors   float64
@@ -33,24 +43,22 @@ type Source interface {
 	Counters(ctx context.Context, t Target) (Counters, error)
 }
 
-// Delta turns two cumulative snapshots into one analysis window. A counter that went
-// backwards was reset by a pod restart; the current value is then the best estimate of
-// what happened since.
-func Delta(prev, cur Counters) analysis.Sample {
-	d := func(p, c float64) int64 {
+// Delta turns two cumulative snapshots into one window. A counter that went backwards was
+// reset by a pod restart; the current value is then the best estimate of what happened
+// since. Failures never exceed requests.
+func Delta(prev, cur Counters) Counters {
+	d := func(p, c float64) float64 {
 		if c < p {
-			return int64(math.Round(c))
+			return math.Round(c)
 		}
-		return int64(math.Round(c - p))
+		return math.Round(c - p)
 	}
-	s := analysis.Sample{Requests: d(prev.Requests, cur.Requests), Errors: d(prev.Errors, cur.Errors), Slow: d(prev.Slow, cur.Slow)}
-	s.Errors = min(s.Errors, s.Requests)
-	s.Slow = min(s.Slow, s.Requests)
-	return s
+	w := Counters{Requests: d(prev.Requests, cur.Requests), Errors: d(prev.Errors, cur.Errors), Slow: d(prev.Slow, cur.Slow)}
+	w.Errors = math.Min(w.Errors, w.Requests)
+	w.Slow = math.Min(w.Slow, w.Requests)
+	return w
 }
 
-// Prometheus queries Istio's standard metrics as reported by the destination sidecar, so
-// every request that reached a canary pod is counted whichever client sent it.
 type Prometheus struct {
 	BaseURL string
 	Client  *http.Client
@@ -61,12 +69,16 @@ func NewPrometheus(baseURL string) *Prometheus {
 }
 
 func (p *Prometheus) Counters(ctx context.Context, t Target) (Counters, error) {
-	sel := fmt.Sprintf(`reporter="destination",destination_workload=%q,destination_workload_namespace=%q`, t.Workload, t.Namespace)
+	reporter := t.Reporter
+	if reporter == "" {
+		reporter = ReporterDestination
+	}
+	sel := fmt.Sprintf(`reporter=%q,destination_workload=%q,destination_workload_namespace=%q`, reporter, t.Workload, t.Namespace)
 	total, err := p.scalar(ctx, fmt.Sprintf(`sum(istio_request_duration_milliseconds_count{%s})`, sel))
 	if err != nil {
 		return Counters{}, fmt.Errorf("requests: %w", err)
 	}
-	errs, err := p.scalar(ctx, fmt.Sprintf(`sum(istio_requests_total{%s,response_code=~"5.."})`, sel))
+	errs, err := p.scalar(ctx, fmt.Sprintf(`sum(istio_requests_total{%s,response_code=~%q})`, sel, errorCodes(reporter)))
 	if err != nil {
 		return Counters{}, fmt.Errorf("errors: %w", err)
 	}
@@ -75,6 +87,15 @@ func (p *Prometheus) Counters(ctx context.Context, t Target) (Counters, error) {
 		return Counters{}, fmt.Errorf("latency buckets: %w", err)
 	}
 	return Counters{Requests: total, Errors: errs, Slow: math.Max(0, total-CountAtOrBelow(buckets, t.LatencyMaxMs))}, nil
+}
+
+// A caller whose request got no response at all (its own timeout, a reset connection) is
+// reported by its sidecar as response code 0; from the caller's side that is a failure.
+func errorCodes(r Reporter) string {
+	if r == ReporterSource {
+		return "5..|0"
+	}
+	return "5.."
 }
 
 type Bucket struct {

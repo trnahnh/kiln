@@ -6,4 +6,5 @@ use (
 	./scheduler-plugin
 	./delivery-controller
 	./chaos
+	./slo
 )

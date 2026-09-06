@@ -1,4 +1,4 @@
-package metrics
+package slo
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/trnahnh/kiln/delivery-controller/internal/analysis"
 )
 
 func TestCountAtOrBelowInterpolatesInsideTheBucket(t *testing.T) {
@@ -38,11 +36,11 @@ func TestCountAtOrBelowInterpolatesInsideTheBucket(t *testing.T) {
 func TestDeltaHandlesCounterResets(t *testing.T) {
 	prev := Counters{Requests: 1000, Errors: 10, Slow: 5}
 	got := Delta(prev, Counters{Requests: 1600, Errors: 16, Slow: 8})
-	if got != (analysis.Sample{Requests: 600, Errors: 6, Slow: 3}) {
+	if got != (Counters{Requests: 600, Errors: 6, Slow: 3}) {
 		t.Fatalf("plain delta: %+v", got)
 	}
 	got = Delta(prev, Counters{Requests: 200, Errors: 3, Slow: 1})
-	if got != (analysis.Sample{Requests: 200, Errors: 3, Slow: 1}) {
+	if got != (Counters{Requests: 200, Errors: 3, Slow: 1}) {
 		t.Fatalf("reset should use the current value: %+v", got)
 	}
 	got = Delta(prev, Counters{Requests: 1001, Errors: 40, Slow: 40})
@@ -78,10 +76,9 @@ func fakePrometheus(t *testing.T, handler func(q string) (int, string)) *Prometh
 	return NewPrometheus(srv.URL)
 }
 
-func TestCountersQueriesTheDestinationSidecarAndInterpolatesSlow(t *testing.T) {
-	var queries []string
-	p := fakePrometheus(t, func(q string) (int, string) {
-		queries = append(queries, q)
+func histogramPrometheus(t *testing.T, queries *[]string) *Prometheus {
+	return fakePrometheus(t, func(q string) (int, string) {
+		*queries = append(*queries, q)
 		switch {
 		case strings.HasPrefix(q, "sum(istio_request_duration_milliseconds_count"):
 			return 200, vector(row(1000, nil))
@@ -92,6 +89,11 @@ func TestCountersQueriesTheDestinationSidecarAndInterpolatesSlow(t *testing.T) {
 		}
 		return 400, `{"status":"error","error":"unexpected query"}`
 	})
+}
+
+func TestCountersQueriesTheDestinationSidecarByDefaultAndInterpolatesSlow(t *testing.T) {
+	var queries []string
+	p := histogramPrometheus(t, &queries)
 	c, err := p.Counters(context.Background(), Target{Namespace: "shop", Workload: "checkout", LatencyMaxMs: 300})
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +110,22 @@ func TestCountersQueriesTheDestinationSidecarAndInterpolatesSlow(t *testing.T) {
 	}
 	if !strings.Contains(queries[1], `response_code=~"5.."`) {
 		t.Errorf("error query does not select 5xx: %q", queries[1])
+	}
+}
+
+func TestCountersFromTheSourceSidecarCountNoResponseAsAnError(t *testing.T) {
+	var queries []string
+	p := histogramPrometheus(t, &queries)
+	if _, err := p.Counters(context.Background(), Target{Namespace: "shop", Workload: "checkout", LatencyMaxMs: 300, Reporter: ReporterSource}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range queries {
+		if !strings.Contains(q, `reporter="source"`) {
+			t.Errorf("query %q does not read the source sidecar", q)
+		}
+	}
+	if !strings.Contains(queries[1], `response_code=~"5..|0"`) {
+		t.Errorf("error query does not select 5xx and 0: %q", queries[1])
 	}
 }
 
