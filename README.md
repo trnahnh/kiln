@@ -58,15 +58,23 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 .
 ├── operator/              # Go, kubebuilder-scaffolded TenantDatabase operator
 ├── gitops/
+│   ├── argocd/            # App-of-apps bootstrap and one Application per component
 │   ├── compositions/      # Crossplane Compositions and XRDs
-│   └── policies/          # OPA/Kyverno policy definitions
+│   ├── policies/          # OPA/Kyverno policy definitions
+│   ├── kafka/             # Single-node KRaft broker for the audit event stream
+│   └── audit/             # Audit Postgres and the audit service
 ├── scheduler-plugin/      # Go, Kubernetes scheduler framework plugin
 ├── delivery-controller/   # Go, canary rollout + rollback decision logic
 ├── chaos/                 # Go, fault injection + SLO scoring
-├── audit-service/         # Java/Spring Boot, Kafka consumer, audit API
+├── audit-service/         # Java/Spring Boot, Kafka consumer, hash-chained audit API
+├── audit/                 # Go, shared publisher every controller emits audit events through
+├── slo/                   # Go, shared Istio/Prometheus SLO metric reader
+├── e2e/                   # Go, per-phase exit-criterion tests against the live cluster
+├── hack/                  # Out-of-Git bootstrap: audit Secrets and the JWT key pair
 ├── docs/
 │   ├── SYSTEM_DESIGN.md
 │   ├── API_REFERENCE.md
+│   ├── DATA_MODEL.md
 │   ├── METRICS.md
 │   ├── ROADMAP.md
 │   └── TESTING.md
@@ -86,21 +94,30 @@ kubectl patch storageclass standard -p '{"allowVolumeExpansion":true}'
 # 2. Stand up observability
 kubectl apply -f gitops/observability/
 
-# 3. Build the cost-aware scheduler, the delivery controller and the chaos images and
-#    hand them to kind; ArgoCD deploys them but never pulls them
+# 3. Build the operator, the cost-aware scheduler, the delivery controller, the chaos and
+#    the audit service images and hand them to kind; ArgoCD deploys them but never pulls them
+make -C operator docker-build kind-load
 make -C scheduler-plugin docker-build kind-load
 make -C delivery-controller docker-build kind-load
 make -C chaos docker-build kind-load
+make -C audit-service docker-build kind-load
 
-# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase, CanaryRollout and
-#    ChaosExperiment CRDs, Crossplane, Kyverno, Istio, the kiln-scheduler, the delivery
-#    controller, the chaos controller and agent, the DatabaseClaim composition, the
-#    admission policies and tenant claims
+# 4. Create what Git must not hold: the audit Postgres credentials and the JWT public key
+#    the audit service verifies tokens with. The private key stays in hack/keys/, gitignored.
+bash hack/audit-secrets.sh
+
+# 5. Bootstrap ArgoCD; from here Git installs the TenantDatabase, CanaryRollout and
+#    ChaosExperiment CRDs, Crossplane, Kyverno, Istio, Kafka, the operator, the
+#    kiln-scheduler, the delivery controller, the chaos controller and agent, the audit
+#    Postgres and service, the DatabaseClaim composition, the admission policies and
+#    tenant claims
 kubectl apply -k gitops/argocd/install --server-side
 kubectl -n argocd rollout status statefulset/argocd-application-controller
 kubectl apply -f gitops/argocd/root.yaml
 
-# 5. Run the operator locally against the kind cluster
+# 6. Optional: run the operator from the host instead of the in-cluster one, for a fast
+#    edit-run loop. Park the ArgoCD-managed copy first so two managers do not compete
+kubectl -n kiln-operator-system scale deployment/kiln-operator-controller-manager --replicas=0
 cd operator && make run
 ```
 
@@ -111,6 +128,8 @@ Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/
 Roll a Deployment out as a canary by labelling its namespace `istio-injection=enabled`, giving it a Service of the same name, and creating a `CanaryRollout` that names it; every later change to its pod template is analysed and either promoted or rolled back. Schema in `docs/API_REFERENCE.md`.
 
 Run a chaos experiment against a meshed service (target and callers in an `istio-injection=enabled` namespace) by creating a `ChaosExperiment` that selects its pods, names a fault type, and declares the SLOs that auto-abort it. The blast radius is capped at `maxReplicaPercentage` of the matching pods, enforced by the node agent; the experiment produces a resilience score, and a breach of `abortOnSLOBreach` reverts every fault within a bounded window. Schema in `docs/API_REFERENCE.md`.
+
+Every action above lands in the audit trail: each controller publishes a wire event to the Kafka topic `kiln.audit`, and the audit service, the only writer of the audit table, hash-chains it into `audit_entry` (`docs/DATA_MODEL.md`). Query it with `GET /v1/audit`, verify the chain with `GET /v1/audit/verify`, or submit a request on your own behalf with `POST /v1/requests`; roles and endpoints are in `docs/API_REFERENCE.md`. Tokens are RS256 JWTs signed with the private key `hack/audit-secrets.sh` generated; `e2e/phase6_test.go` shows how one is minted.
 
 ### Changing a CRD
 
@@ -143,4 +162,4 @@ Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`
 
 ## Status
 
-Phases 0 (foundation) and 1 (operator) are complete; Phase 2 (policy and GitOps) is next. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
+Phases 0 to 5 (foundation, operator, policy and GitOps, scheduler, progressive delivery, chaos) are complete; Phase 6 (audit/RBAC service) is in progress. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.

@@ -99,8 +99,10 @@ Decisions: [ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-le
 - **Exactly-once processing.** A Kafka redelivery must not create a duplicate entry or a gap. Solved with idempotency keys derived from the event ID plus a unique constraint at the database layer.
 - **RBAC boundary.** This service enforces *who can submit a request*. OPA/Kyverno at the admission layer enforces *what a request is allowed to contain*. One source of truth per concern, no duplicated policy logic between the two.
 - **Query performance at scale.** Indexed on actor, resource, and timestamp range; the table is partitioned by time once volume warrants it.
+- **Who chains, and who is the actor.** Publishers cannot chain across each other, so they send unchained wire events and the service alone computes `prevHash`/`hash` at insert under an advisory lock; the write boundary is a single Postgres credential held only by the service. A controller does not know who applied a CR, so the REST path stamps the caller on what it applies and controllers attribute everything else to themselves ([ADR-0018](decisions/0018-the-audit-service-alone-computes-the-hash-chain.md)).
+- **Publishing never blocks the platform.** A Kafka outage must not stall provisioning, a rollout or a chaos revert, so every controller publishes asynchronously from a bounded buffer with retries, and a publish that is finally given up is counted and raised as a Warning Event rather than lost silently ([ADR-0017](decisions/0017-audit-publishing-never-blocks-a-reconcile.md)).
 
-See [`API_REFERENCE.md`](API_REFERENCE.md#audit-event-schema) for the event schema and endpoint list.
+See [`API_REFERENCE.md`](API_REFERENCE.md#audit-event-schema) for the event schema and endpoint list, and [`DATA_MODEL.md`](DATA_MODEL.md) for the table, the hash and the insert protocol.
 
 ## Cross-cutting: observability
 
