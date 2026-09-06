@@ -215,32 +215,56 @@ A node missing the contract is treated as on-demand at the highest known hourly 
 
 ## Audit event schema
 
-Emitted by every subsystem to the Kafka event stream, consumed by the Audit/RBAC service.
+Every subsystem publishes to the Kafka topic `kiln.audit` (one partition, record key = `resource`); the Audit/RBAC service is the only consumer and the only writer of the audit table ([ADR-0018](decisions/0018-the-audit-service-alone-computes-the-hash-chain.md)). A publisher sends the **wire event**; the service adds the chain fields when it stores the **entry**.
+
+**Wire event** (the Kafka record value, JSON):
 
 ```json
 {
-  "eventId": "uuid",
+  "eventId": "6f1c2c1e-7d1e-5d0b-9a8e-3c1b7a4f2e10",
   "actor": "user@company.com",
-  "action": "PROVISION_REQUEST | POLICY_DENY | DEPLOY | ROLLBACK | CHAOS_EXPERIMENT",
-  "resource": "TenantDatabase/team-checkout-db",
-  "timestamp": "2026-09-04T18:00:00Z",
-  "prevHash": "sha256 of previous entry",
-  "hash": "sha256 of this entry"
+  "action": "PROVISION",
+  "resource": "TenantDatabase/team-checkout/checkout-db",
+  "timestamp": "2026-09-04T18:00:00.000000Z",
+  "details": {"outcome": "Ready"}
 }
 ```
 
-`prevHash`/`hash` form the tamper-evidence chain described in [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md#6-audit-compliance-and-rbac-service). Verifying the chain means recomputing each entry's hash from its content plus `prevHash` and confirming it matches the stored `hash`.
+| Field | Meaning |
+|---|---|
+| `eventId` | UUID. Publishers derive it deterministically (UUID v5) from the resource, action and the transition's own key, so a retried reconcile or a redelivered record carries the same id and is stored once. |
+| `actor` | Who caused the action: the JWT subject on the REST path, the `platform.internal/requested-by` annotation on a CR the service applied, otherwise `system:<controller>`. |
+| `action` | One of the table below. |
+| `resource` | `<Kind>/<namespace>/<name>`. |
+| `timestamp` | RFC 3339 UTC; stored at microsecond precision. |
+| `details` | JSON object, may be empty. `outcome` names the result of the action; other keys are per action. Part of the hashed content. |
+
+| Action | Publisher | `details` |
+|---|---|---|
+| `PROVISION_REQUEST` | Audit service, `POST /v1/requests` | `outcome: Received`, `kind` |
+| `POLICY_DENY` | Audit service, `POST /v1/requests` | `outcome: Denied`, `rule`, `reason` |
+| `PROVISION` | Operator | `outcome: Ready \| Failed`, `reason` |
+| `BACKUP`, `RESTORE` | Operator | `outcome: Started \| Succeeded \| Failed`, `backupId` |
+| `SCALE` | Operator | `outcome: Applied \| Rejected`, `from`, `to` (storage) |
+| `SCHEDULE` | Scheduler plugin, PostBind | `outcome: Bound`, `node`, `workloadClass` |
+| `DEPLOY` | Delivery controller | `outcome: Started \| Promoted`, `templateHash` |
+| `ROLLBACK` | Delivery controller | `outcome: RolledBack`, `reason`, `criterion`, `templateHash` |
+| `CHAOS_EXPERIMENT` | Chaos controller | `outcome: Started \| Completed \| Aborted`, `faultType`, `targets`, `resilienceScore`, `abortReason` |
+
+**Stored entry** (what `GET /v1/audit` returns): the wire event plus `seq`, `prevHash` and `hash`. The chain and the table are defined in [`DATA_MODEL.md`](DATA_MODEL.md). Verifying the chain means recomputing each entry's hash from its content plus `prevHash`, confirming it matches the stored `hash`, and confirming its `prevHash` equals the previous entry's `hash`.
 
 ## Audit/RBAC service REST endpoints
 
+Roles are read from the JWT's `roles` claim (an array of strings).
+
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| `POST` | `/v1/requests` | Submit a provisioning/deploy/chaos request (thin API alternative to applying a CRD directly) | Bearer JWT |
-| `GET` | `/v1/audit?actor=&resource=&from=&to=` | Query the audit trail by actor, resource, and time range | Bearer JWT, `audit:read` role |
-| `GET` | `/v1/audit/verify` | Trigger a full hash-chain verification pass, returns any broken links | Bearer JWT, `audit:admin` role |
+| `POST` | `/v1/requests` | Submit a `DatabaseClaim`, `CanaryRollout` or `ChaosExperiment` manifest (JSON body) on the caller's behalf: the service applies it, stamped `platform.internal/requested-by: <subject>`, and publishes `PROVISION_REQUEST`; an admission rejection publishes `POLICY_DENY` and returns `422` with `POLICY_DENIED` | Bearer JWT, `requests:submit` role |
+| `GET` | `/v1/audit?actor=&resource=&from=&to=&limit=` | Query the audit trail by actor, resource, and time range, ordered by `seq`; `limit` defaults to 100, at most 1000 | Bearer JWT, `audit:read` role |
+| `GET` | `/v1/audit/verify` | Full hash-chain verification pass; `{"ok": true, "entries": n}` or `{"ok": false, "code": "AUDIT_CHAIN_BROKEN", "brokenLinks": [{"seq", "eventId", "reason"}]}` | Bearer JWT, `audit:admin` role |
 | `GET` | `/healthz` | Liveness probe | None |
 
-All write paths (`POST /v1/requests`) are also mirrored as Kafka producers internally; the REST endpoint is a convenience wrapper for developers who don't want to apply a CRD directly, not a bypass of the event stream.
+`POST /v1/requests` is mirrored as a Kafka producer internally: the service publishes its own events to `kiln.audit` and stores them only when it consumes them like any other subsystem's. The REST endpoint is a convenience wrapper for developers who don't want to apply a CRD directly, not a bypass of the event stream.
 
 ## Error codes
 
