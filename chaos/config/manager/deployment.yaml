@@ -1,0 +1,202 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kiln-chaos-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kiln-chaos-controller
+  namespace: kiln-chaos-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kiln-chaos-agent
+  namespace: kiln-chaos-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kiln-chaos-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kiln-chaos-controller
+subjects:
+  - kind: ServiceAccount
+    name: kiln-chaos-controller
+    namespace: kiln-chaos-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kiln-chaos-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kiln-chaos-agent
+subjects:
+  - kind: ServiceAccount
+    name: kiln-chaos-agent
+    namespace: kiln-chaos-system
+---
+# Leader election so a single controller drives the timeline and lease renewals.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kiln-chaos-leader-election
+  namespace: kiln-chaos-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kiln-chaos-leader-election
+  namespace: kiln-chaos-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kiln-chaos-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: kiln-chaos-controller
+    namespace: kiln-chaos-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kiln-chaos-controller
+  namespace: kiln-chaos-system
+  labels:
+    app.kubernetes.io/name: kiln-chaos-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kiln-chaos-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kiln-chaos-controller
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: kiln-chaos-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          # Built by `make docker-build` and loaded with `make kind-load`; never pulled.
+          image: kiln-chaos:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=controller
+            - --prometheus-url=http://prometheus.monitoring.svc:9090
+            - --leader-elect
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+# The agent injects tc/iptables faults inside target pods' network namespaces and joins
+# their cgroups, so it must be privileged and share the host PID namespace. Its blast
+# radius is bounded by the ChaosExperiment CRs it reads, not by what it could technically
+# reach (ADR-0016).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kiln-chaos-agent
+  namespace: kiln-chaos-system
+  labels:
+    app.kubernetes.io/name: kiln-chaos-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kiln-chaos-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kiln-chaos-agent
+    spec:
+      serviceAccountName: kiln-chaos-agent
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: agent
+          image: kiln-chaos:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=agent
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=0
+            - --ledger-dir=/var/lib/kiln-chaos
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          ports:
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+            - name: ledger
+              mountPath: /var/lib/kiln-chaos
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: ledger
+          hostPath:
+            path: /var/lib/kiln-chaos
+            type: DirectoryOrCreate
