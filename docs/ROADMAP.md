@@ -26,7 +26,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: fault injection, SLO scoring, abort logic.
   Exit criterion: an experiment against a test service produces a resilience score; a forced SLO breach triggers auto-abort within the defined threshold.
 
-- [ ] **Phase 6: Audit/RBAC service**
+- [x] **Phase 6: Audit/RBAC service**
   Scope: Spring Boot service, Kafka event stream, hash-chained log, RBAC enforcement.
   Exit criterion: every action from Phases 1-5 is visible in the audit log; a tampered entry is detected on verification; a duplicate Kafka delivery does not duplicate an entry.
 
