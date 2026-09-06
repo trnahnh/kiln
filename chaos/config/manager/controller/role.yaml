@@ -1,0 +1,46 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kiln-chaos-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - platform.internal
+  resources:
+  - chaosexperiments
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - platform.internal
+  resources:
+  - chaosexperiments/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - platform.internal
+  resources:
+  - chaosexperiments/status
+  verbs:
+  - get
+  - patch
+  - update
