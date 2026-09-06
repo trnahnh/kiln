@@ -1,0 +1,6 @@
+bin/
+**/bin/
+**/testbin/
+.git/
+SESSION.md
+PRD.md

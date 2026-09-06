@@ -1,9 +1,11 @@
 FROM golang:1.26 AS builder
+ENV GOWORK=off
 WORKDIR /workspace
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o kiln-delivery-controller ./cmd
+COPY slo/ slo/
+COPY delivery-controller/go.mod delivery-controller/go.sum delivery-controller/
+RUN cd delivery-controller && go mod download
+COPY delivery-controller/ delivery-controller/
+RUN cd delivery-controller && CGO_ENABLED=0 GOOS=linux go build -o /workspace/kiln-delivery-controller ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /

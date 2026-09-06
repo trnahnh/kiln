@@ -16,7 +16,7 @@ import (
 
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
-	"github.com/trnahnh/kiln/delivery-controller/internal/metrics"
+	"github.com/trnahnh/kiln/slo"
 )
 
 const (
@@ -106,7 +106,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 	})
 
 	It("rolls a regressed version back on the mesh and parks the canary", func() {
-		source.script(metrics.Counters{Requests: 100}, false)
+		source.script(slo.Counters{Requests: 100}, false)
 		setImage("v2")
 
 		Eventually(func() bool {
@@ -118,7 +118,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		Expect(get[*platformv1.CanaryRollout](appName).Status.Phase).To(Equal(platformv1.PhaseAnalyzing))
 		Consistently(func() int { _, c := weights(); return c }, 2*time.Second, tick).Should(Equal(5), "nothing moves under the sample-size gate")
 
-		source.script(metrics.Counters{Requests: 600, Errors: 200}, false)
+		source.script(slo.Counters{Requests: 600, Errors: 200}, false)
 
 		Eventually(func() bool {
 			markRolledOut(appName)
@@ -155,7 +155,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 	})
 
 	It("promotes a healthy version through every checkpoint onto primary", func() {
-		source.script(metrics.Counters{Requests: 600}, false)
+		source.script(slo.Counters{Requests: 600}, false)
 		setImage("v3")
 
 		Eventually(func() bool {
@@ -193,7 +193,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 	})
 
 	It("restarts from zero when the template changes mid-rollout", func() {
-		source.script(metrics.Counters{Requests: 100}, false)
+		source.script(slo.Counters{Requests: 100}, false)
 		setImage("v4")
 		Eventually(func() bool {
 			markRolledOut(appName)
@@ -209,7 +209,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 			return cr.Status.ObservedTemplateHash != hashBefore && p == 100 && c == 0 && cr.Status.Analysis.TotalSamples == 0
 		}, timeout, tick).Should(BeTrue(), "the mesh went back to primary and the evidence was discarded")
 
-		source.script(metrics.Counters{Requests: 600, Errors: 200}, false)
+		source.script(slo.Counters{Requests: 600, Errors: 200}, false)
 		Eventually(func() platformv1.Phase {
 			markRolledOut(appName)
 			return get[*platformv1.CanaryRollout](appName).Status.Phase
@@ -221,7 +221,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		cr.Spec.Analysis.MaxStepDuration = metav1.Duration{Duration: 3 * time.Second}
 		Expect(k8sClient.Update(ctx, cr)).To(Succeed())
 
-		source.script(metrics.Counters{}, true)
+		source.script(slo.Counters{}, true)
 		setImage("v6")
 		Eventually(func() platformv1.Phase {
 			markRolledOut(appName)

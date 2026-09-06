@@ -22,7 +22,7 @@ import (
 
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
-	"github.com/trnahnh/kiln/delivery-controller/internal/metrics"
+	"github.com/trnahnh/kiln/slo"
 )
 
 var (
@@ -38,18 +38,18 @@ var (
 // configured window, so each analysis tick sees one more window of the scripted traffic.
 type fakeSource struct {
 	mu      sync.Mutex
-	window  metrics.Counters
-	current metrics.Counters
+	window  slo.Counters
+	current slo.Counters
 	fail    bool
 	reads   int
 }
 
-func (f *fakeSource) Counters(_ context.Context, _ metrics.Target) (metrics.Counters, error) {
+func (f *fakeSource) Counters(_ context.Context, _ slo.Target) (slo.Counters, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
 	if f.fail {
-		return metrics.Counters{}, context.DeadlineExceeded
+		return slo.Counters{}, context.DeadlineExceeded
 	}
 	f.current.Requests += f.window.Requests
 	f.current.Errors += f.window.Errors
@@ -57,7 +57,7 @@ func (f *fakeSource) Counters(_ context.Context, _ metrics.Target) (metrics.Coun
 	return f.current, nil
 }
 
-func (f *fakeSource) script(window metrics.Counters, fail bool) {
+func (f *fakeSource) script(window slo.Counters, fail bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.window = window

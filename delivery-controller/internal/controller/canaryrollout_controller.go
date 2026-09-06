@@ -25,7 +25,7 @@ import (
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/analysis"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
-	"github.com/trnahnh/kiln/delivery-controller/internal/metrics"
+	"github.com/trnahnh/kiln/slo"
 )
 
 const (
@@ -50,7 +50,7 @@ type CanaryRolloutReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
-	Metrics  metrics.Source
+	Metrics  slo.Source
 	Router   mesh.Router
 	Now      func() time.Time
 
@@ -257,7 +257,7 @@ func (r *CanaryRolloutReconciler) analyze(ctx context.Context, cr *platformv1.Ca
 	var sample analysis.Sample
 	snapshot := prev
 	if ok {
-		sample = metrics.Delta(countersFromStatus(prev), cur)
+		sample = sampleOf(slo.Delta(countersFromStatus(prev), cur))
 		snapshot = &platformv1.CounterSnapshot{Requests: cur.Requests, Errors: cur.Errors, Slow: cur.Slow, At: now}
 	}
 	d := analysis.Tick(cfg.Config, &st, now.Time, sample, ok)
@@ -440,8 +440,8 @@ func (r *CanaryRolloutReconciler) route(cr *platformv1.CanaryRollout, target *ap
 	}
 }
 
-func (r *CanaryRolloutReconciler) target(cr *platformv1.CanaryRollout, target *appsv1.Deployment) metrics.Target {
-	return metrics.Target{Namespace: cr.Namespace, Workload: target.Name, LatencyMaxMs: float64(cr.Spec.SuccessCriteria.LatencyP99MaxMs)}
+func (r *CanaryRolloutReconciler) target(cr *platformv1.CanaryRollout, target *appsv1.Deployment) slo.Target {
+	return slo.Target{Namespace: cr.Namespace, Workload: target.Name, LatencyMaxMs: float64(cr.Spec.SuccessCriteria.LatencyP99MaxMs)}
 }
 
 func (r *CanaryRolloutReconciler) setReady(cr *platformv1.CanaryRollout, ready bool, reason, msg string) {
@@ -511,7 +511,7 @@ func configFrom(cr *platformv1.CanaryRollout) (rolloutConfig, error) {
 	return rolloutConfig{cfg}, nil
 }
 
-func stateToStatus(st analysis.State, baseline *metrics.Counters, now metav1.Time) *platformv1.AnalysisState {
+func stateToStatus(st analysis.State, baseline *slo.Counters, now metav1.Time) *platformv1.AnalysisState {
 	out := &platformv1.AnalysisState{
 		Checkpoint:             int32(st.Checkpoint),
 		Errors:                 platformv1.CriterionState{Cumulative: st.Errors.Cumulative, SinceCheckpoint: st.Errors.SinceCheckpoint},
@@ -546,11 +546,11 @@ func stateFromStatus(s *platformv1.AnalysisState, weight int) analysis.State {
 	return st
 }
 
-func countersFromStatus(s *platformv1.CounterSnapshot) metrics.Counters {
+func countersFromStatus(s *platformv1.CounterSnapshot) slo.Counters {
 	if s == nil {
-		return metrics.Counters{}
+		return slo.Counters{}
 	}
-	return metrics.Counters{Requests: s.Requests, Errors: s.Errors, Slow: s.Slow}
+	return slo.Counters{Requests: s.Requests, Errors: s.Errors, Slow: s.Slow}
 }
 
 func (r *CanaryRolloutReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -577,4 +577,8 @@ func (r *CanaryRolloutReconciler) rolloutsTargeting(ctx context.Context, obj cli
 		}
 	}
 	return reqs
+}
+
+func sampleOf(w slo.Counters) analysis.Sample {
+	return analysis.Sample{Requests: int64(w.Requests), Errors: int64(w.Errors), Slow: int64(w.Slow)}
 }

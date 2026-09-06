@@ -35,8 +35,8 @@ run: manifests generate ## Run the controller from the host against the current 
 	go run ./cmd --prometheus-url=http://localhost:9090
 
 .PHONY: docker-build
-docker-build: ## Build the controller image.
-	docker build -t $(IMG) .
+docker-build: ## Build the controller image; the context is the repo root so the shared slo module is on hand.
+	docker build -t $(IMG) -f Dockerfile ..
 
 .PHONY: kind-load
 kind-load: ## Load the image into the kind cluster so the ArgoCD-managed Deployment can start it.

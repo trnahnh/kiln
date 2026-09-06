@@ -17,7 +17,7 @@ import (
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/controller"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
-	"github.com/trnahnh/kiln/delivery-controller/internal/metrics"
+	"github.com/trnahnh/kiln/slo"
 )
 
 var (
@@ -60,7 +60,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("canaryrollout"),
-		Metrics:  metrics.NewPrometheus(prometheusURL),
+		Metrics:  slo.NewPrometheus(prometheusURL),
 		Router:   &mesh.Istio{Client: mgr.GetClient()},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "failed to create controller", "controller", "canaryrollout")
