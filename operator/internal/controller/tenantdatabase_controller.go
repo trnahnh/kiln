@@ -49,7 +49,8 @@ type TenantDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=platform.internal,resources=tenantdatabases/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;services;secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *TenantDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -260,12 +261,10 @@ func (r *TenantDatabaseReconciler) reconcileDelete(ctx context.Context, tdb *pla
 }
 
 func (r *TenantDatabaseReconciler) ensureDependents(ctx context.Context, tdb *platformv1.TenantDatabase) error {
-	secret, err := desiredSecret(tdb)
-	if err != nil {
+	if err := r.createCredentials(ctx, tdb); err != nil {
 		return err
 	}
 	objects := []client.Object{
-		secret,
 		desiredPVC(tdb, dataPVCName(tdb), tdb.Spec.StorageGB),
 		desiredPVC(tdb, backupsPVCName(tdb), tdb.Spec.StorageGB),
 		desiredService(tdb),
@@ -275,6 +274,22 @@ func (r *TenantDatabaseReconciler) ensureDependents(ctx context.Context, tdb *pl
 		if err := r.createIfMissing(ctx, tdb, obj); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// createCredentials never reads the Secret back: the operator's only Secret verb is create,
+// so it cannot read any Secret anywhere, the audit writer credential included (ADR-0019).
+func (r *TenantDatabaseReconciler) createCredentials(ctx context.Context, tdb *platformv1.TenantDatabase) error {
+	secret, err := desiredSecret(tdb)
+	if err != nil {
+		return err
+	}
+	if err := controllerutil.SetControllerReference(tdb, secret, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on %s: %w", secret.Name, err)
+	}
+	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create credentials %s: %w", secret.Name, err)
 	}
 	return nil
 }
