@@ -1,0 +1,27 @@
+# A ChaosExperiment may only fault pods in its own namespace. The controller enforces this
+# too, but admission is the structural gate: it stops a cross-namespace blast radius before
+# any controller sees the object (ADR-0016, same fail-closed shape as ADR-0006).
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: chaosexperiment-same-namespace
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [platform.internal]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [chaosexperiments]
+  validations:
+    - expression: >-
+        !has(object.spec.target.namespace) ||
+        object.spec.target.namespace == "" ||
+        object.spec.target.namespace == object.metadata.namespace
+      message: "POLICY_DENIED rule=chaos-same-namespace: spec.target.namespace must be the experiment's own namespace"

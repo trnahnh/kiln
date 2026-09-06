@@ -5,6 +5,7 @@ metadata:
 policies:
   - ../databaseclaim-org-rules.yaml
   - ../tenantdatabase-storage-ceiling.yaml
+  - ../chaosexperiment-same-namespace.yaml
 resources:
   - resources.yaml
 results:
@@ -27,4 +28,14 @@ results:
     isValidatingPolicy: true
     kind: TenantDatabase
     resources: [direct-over-ceiling]
+    result: fail
+  - policy: chaosexperiment-same-namespace
+    isValidatingPolicy: true
+    kind: ChaosExperiment
+    resources: [chaos-same-ns, chaos-own-ns-explicit]
+    result: pass
+  - policy: chaosexperiment-same-namespace
+    isValidatingPolicy: true
+    kind: ChaosExperiment
+    resources: [chaos-cross-ns]
     result: fail

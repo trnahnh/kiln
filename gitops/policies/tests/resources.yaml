@@ -102,3 +102,50 @@ spec:
   engine: postgres
   version: "16"
   storageGB: 101
+---
+apiVersion: platform.internal/v1
+kind: ChaosExperiment
+metadata:
+  name: chaos-same-ns
+  namespace: team-checkout
+spec:
+  target:
+    labelSelector: app=checkout
+    maxReplicaPercentage: 30
+  faultType: pod-kill
+  duration: 5m
+  abortOnSLOBreach:
+    errorRateMax: 0.05
+    latencyP99MaxMs: 1000
+---
+apiVersion: platform.internal/v1
+kind: ChaosExperiment
+metadata:
+  name: chaos-own-ns-explicit
+  namespace: team-checkout
+spec:
+  target:
+    namespace: team-checkout
+    labelSelector: app=checkout
+    maxReplicaPercentage: 30
+  faultType: pod-kill
+  duration: 5m
+  abortOnSLOBreach:
+    errorRateMax: 0.05
+    latencyP99MaxMs: 1000
+---
+apiVersion: platform.internal/v1
+kind: ChaosExperiment
+metadata:
+  name: chaos-cross-ns
+  namespace: team-checkout
+spec:
+  target:
+    namespace: team-payments
+    labelSelector: app=checkout
+    maxReplicaPercentage: 30
+  faultType: pod-kill
+  duration: 5m
+  abortOnSLOBreach:
+    errorRateMax: 0.05
+    latencyP99MaxMs: 1000
