@@ -129,6 +129,8 @@ ArgoCD reports the Application OutOfSync while the local CRD differs from Git; t
 
 Note for Windows hosts: `crossplane render` (the offline composition check in `docs/TESTING.md`) has no Windows build and needs Docker. Locally it only works from WSL running as root with `DOCKER_HOST=unix:///mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.proxy.sock`. CI runs it natively on Linux with no such requirement.
 
+Note on chaos latency injection: the `latency-injection` fault needs the `sch_netem` kernel module, which the WSL2 kernel does not ship. On a kind cluster running under WSL2, latency injection fails to apply (`tc ... Error: Specified qdisc kind is unknown`) and the experiment aborts rather than scoring, so this fault cannot be verified locally on such a host. The other faults (pod-kill, network-partition, resource-exhaustion) work locally; CI runs on a stock Linux kernel with `sch_netem`, so `TestPhase5Chaos` proves latency there.
+
 Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Docs index
