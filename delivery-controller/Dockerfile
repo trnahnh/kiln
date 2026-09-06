@@ -2,6 +2,7 @@ FROM golang:1.26 AS builder
 ENV GOWORK=off
 WORKDIR /workspace
 COPY slo/ slo/
+COPY audit/ audit/
 COPY delivery-controller/go.mod delivery-controller/go.sum delivery-controller/
 RUN cd delivery-controller && go mod download
 COPY delivery-controller/ delivery-controller/

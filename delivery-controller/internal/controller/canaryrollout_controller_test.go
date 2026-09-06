@@ -14,6 +14,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
 	"github.com/trnahnh/kiln/slo"
@@ -25,6 +26,26 @@ const (
 	timeout = 30 * time.Second
 	tick    = 200 * time.Millisecond
 )
+
+// auditOutcomes lists "action/outcome" for every event published about the rollout, in order.
+func auditOutcomes() []string {
+	var out []string
+	for _, e := range auditLog.Events() {
+		if e.Resource == audit.ResourceRef("CanaryRollout", ns, appName) {
+			out = append(out, e.Action+"/"+e.Details["outcome"].(string))
+		}
+	}
+	return out
+}
+
+func auditEvent(action, outcome string) audit.Event {
+	for _, e := range auditLog.Events() {
+		if e.Resource == audit.ResourceRef("CanaryRollout", ns, appName) && e.Action == action && e.Details["outcome"] == outcome {
+			return e
+		}
+	}
+	return audit.Event{}
+}
 
 var _ = Describe("CanaryRollout", Ordered, func() {
 	var router *mesh.Istio
@@ -146,6 +167,14 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		Expect(cr.Status.Analysis.TotalSamples).To(BeNumerically(">=", 1800), "three capped windows were needed")
 		Expect(get[*appsv1.Deployment](appName + "-primary").Spec.Template.Spec.Containers[0].Image).To(Equal("fortio/fortio:v1"), "primary never saw the bad version")
 		Expect(eventReasons()).To(ContainElement("RolledBack"))
+
+		Expect(auditOutcomes()).To(Equal([]string{"DEPLOY/Started", "ROLLBACK/RolledBack"}))
+		rolledBack := auditEvent(audit.ActionRollback, "RolledBack")
+		Expect(rolledBack.Actor).To(Equal("system:canaryrollout"))
+		Expect(rolledBack.Details["reason"]).To(Equal(platformv1.ReasonRegressionDetected))
+		Expect(rolledBack.Details["criterion"]).NotTo(BeEmpty())
+		Expect(rolledBack.Details["templateHash"]).To(Equal(cr.Status.ObservedTemplateHash))
+		Expect(auditEvent(audit.ActionDeploy, "Started").Details["templateHash"]).To(Equal(cr.Status.ObservedTemplateHash))
 	})
 
 	It("does not restart a rollout for the version it just rolled back", func() {
@@ -190,6 +219,9 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		for _, pct := range []int{5, 20, 50, 100} {
 			Expect(eventMessages()).To(ContainElement(ContainSubstring(fmt.Sprintf("canary receives %d%% of traffic", pct))))
 		}
+
+		Expect(auditOutcomes()).To(Equal([]string{"DEPLOY/Started", "ROLLBACK/RolledBack", "DEPLOY/Started", "DEPLOY/Promoted"}))
+		Expect(auditEvent(audit.ActionDeploy, "Promoted").Details["templateHash"]).To(Equal(cr.Status.PromotedTemplateHash))
 	})
 
 	It("restarts from zero when the template changes mid-rollout", func() {
