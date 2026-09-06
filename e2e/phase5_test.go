@@ -69,7 +69,8 @@ func TestPhase5Chaos(t *testing.T) {
 	t.Cleanup(h.deleteNamespace)
 	h.deployTarget()
 
-	t.Run("latency breach auto-aborts and the tc rule is cleared on the node", h.testLatencyBreachAborts)
+	t.Run("network partition breach auto-aborts and the rule is cleared on the node", h.testPartitionBreachAborts)
+	t.Run("latency injection aborts and leaves no tc rule on the node", h.testLatencyAborts)
 	t.Run("network partition stays within the blast radius", h.testPartitionContained)
 	t.Run("pod-kill produces a score and stops on completion", h.testPodKillScored)
 	t.Run("resource-exhaustion produces a score", h.testExhaustionScored)
@@ -174,9 +175,48 @@ func chaosFortio(ns, name string, replicas int32, args ...string) *appsv1.Deploy
 	}
 }
 
-func (h *chaosHarness) testLatencyBreachAborts(t *testing.T) {
+// testPartitionBreachAborts is the headline forced-breach proof and works on any kernel:
+// partitioning the whole service breaks its SLO, and the abort is real only when the
+// iptables rule is gone from the node.
+func (h *chaosHarness) testPartitionBreachAborts(t *testing.T) {
 	g := NewWithT(t)
-	name := "latency-breach"
+	name := "partition-breach"
+	h.applyExperiment(map[string]any{
+		"target":           map[string]any{"labelSelector": "app=" + chaosTargetApp, "maxReplicaPercentage": int64(100)},
+		"faultType":        "network-partition",
+		"duration":         "120s",
+		"abortOnSLOBreach": map[string]any{"errorRateMax": 0.2, "latencyP99MaxMs": int64(1000)},
+		"analysis":         map[string]any{"interval": "5s"},
+	}, name)
+	defer h.deleteExperiment(name)
+
+	var targets []string
+	g.Eventually(func() []string { targets = h.targetPods(name); return targets }, 2*time.Minute, poll).Should(HaveLen(4), "100% of four pods is four")
+
+	// Ground truth: the DROP chain is actually present on a targeted pod during the fault.
+	g.Eventually(func() bool { return h.hasDropChain(targets[0]) }, 90*time.Second, 2*time.Second).Should(BeTrue(), "partition never applied to %s", targets[0])
+	t.Logf("partition observed on %v", targets)
+
+	// The forced breach aborts the experiment.
+	g.Eventually(func() string { return h.abortReason(name) }, 3*time.Minute, poll).Should(Equal("SLOBreach"), "a full partition did not trip the abort")
+	breachSeen := time.Now()
+
+	// The abort is real only if the fault is gone from every targeted pod, read on the node.
+	for _, pod := range targets {
+		g.Eventually(func() bool { return h.hasDropChain(pod) }, abortClearBound, 2*time.Second).Should(BeFalse(), "partition still on %s after abort", pod)
+	}
+	t.Logf("all partition rules cleared %s after the breach was visible", time.Since(breachSeen).Round(time.Second))
+	g.Expect(h.phase(name)).To(Equal("Aborted"))
+	g.Expect(h.score(name)).To(Equal(0.0))
+}
+
+// testLatencyAborts exercises the latency fault. Where the kernel has sch_netem the 2s delay
+// trips the SLO breach; where it does not the injection fails and the controller aborts
+// rather than scoring a run that never happened. Either way the experiment aborts and leaves
+// no tc rule on the node.
+func (h *chaosHarness) testLatencyAborts(t *testing.T) {
+	g := NewWithT(t)
+	name := "latency"
 	h.applyExperiment(map[string]any{
 		"target":           map[string]any{"labelSelector": "app=" + chaosTargetApp, "maxReplicaPercentage": int64(50)},
 		"faultType":        "latency-injection",
@@ -187,24 +227,15 @@ func (h *chaosHarness) testLatencyBreachAborts(t *testing.T) {
 	}, name)
 	defer h.deleteExperiment(name)
 
-	// The controller selects the pods; read them so the node lookups target the right ones.
 	var targets []string
-	g.Eventually(func() []string { targets = h.targetPods(name); return targets }, 2*time.Minute, poll).Should(HaveLen(2), "50% of four pods is two")
+	g.Eventually(func() []string { targets = h.targetPods(name); return targets }, 2*time.Minute, poll).Should(HaveLen(2))
 
-	// Ground truth: netem is actually present on a targeted pod during the fault.
-	g.Eventually(func() bool { return h.hasNetem(targets[0]) }, 90*time.Second, 2*time.Second).Should(BeTrue(), "tc netem never appeared on %s", targets[0])
-	t.Logf("netem observed on %v", targets)
+	g.Eventually(func() string { return h.abortReason(name) }, 3*time.Minute, poll).Should(Or(Equal("SLOBreach"), Equal("InjectionFailed")), "latency neither breached nor reported an injection failure")
+	t.Logf("latency aborted with reason %q", h.abortReason(name))
 
-	// The forced breach aborts the experiment.
-	g.Eventually(func() string { return h.abortReason(name) }, 2*time.Minute, poll).Should(Equal("SLOBreach"), "the 2s latency did not trip the abort")
-	breachSeen := time.Now()
-
-	// The abort is real only if the fault is gone from every targeted pod, on the node,
-	// within the bound.
 	for _, pod := range targets {
 		g.Eventually(func() bool { return h.hasNetem(pod) }, abortClearBound, 2*time.Second).Should(BeFalse(), "netem still on %s after abort", pod)
 	}
-	t.Logf("all netem cleared %s after the breach was visible", time.Since(breachSeen).Round(time.Second))
 	g.Expect(h.phase(name)).To(Equal("Aborted"))
 	g.Expect(h.score(name)).To(Equal(0.0))
 }
