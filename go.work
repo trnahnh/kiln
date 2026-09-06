@@ -7,4 +7,5 @@ use (
 	./delivery-controller
 	./chaos
 	./slo
+	./audit
 )
