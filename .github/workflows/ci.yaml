@@ -95,6 +95,33 @@ jobs:
           grep -q 'platform.internal/team: checkout$' rendered.yaml
           grep -q 'platform.internal/cost-center: eng-platform$' rendered.yaml
 
+  audit-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: hash chain, idempotency and RBAC logic without Kafka or Postgres
+        run: ./gradlew test --no-daemon
+        working-directory: audit-service
+
+  audit-integration:
+    runs-on: ubuntu-latest
+    needs: audit-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: real Kafka and Postgres via Testcontainers, redelivery and tamper simulation
+        run: ./gradlew integrationTest --no-daemon
+        working-directory: audit-service
+
   operator-integration:
     runs-on: ubuntu-latest
     needs: operator-unit
@@ -113,7 +140,7 @@ jobs:
 
   platform-e2e:
     runs-on: ubuntu-latest
-    needs: [gitops-unit, scheduler-unit, delivery-unit, chaos-unit]
+    needs: [gitops-unit, operator-unit, scheduler-unit, delivery-unit, chaos-unit, audit-unit]
     permissions:
       contents: write
     steps:
@@ -122,25 +149,32 @@ jobs:
         with:
           go-version-file: e2e/go.mod
           cache-dependency-path: e2e/go.sum
-      - name: build the kiln-scheduler, kiln-delivery-controller and kiln-chaos images
+      - name: build the operator, kiln-scheduler, kiln-delivery-controller, kiln-chaos and kiln-audit-service images
         run: |
+          make -C operator docker-build
           make -C scheduler-plugin docker-build
           make -C delivery-controller docker-build
           make -C chaos docker-build
+          make -C audit-service docker-build
       - uses: helm/kind-action@v1
         with:
           config: kind-config.yaml
           cluster_name: kiln-dev
-      - name: load the images, stand up observability and bootstrap argocd
+      - name: load the images, stand up observability, create the audit secrets and bootstrap argocd
         run: |
+          make -C operator kind-load
           make -C scheduler-plugin kind-load
           make -C delivery-controller kind-load
           make -C chaos kind-load
+          make -C audit-service kind-load
           kubectl apply -f gitops/observability/
           kubectl -n monitoring rollout status deploy/prometheus --timeout=300s
           kubectl apply -k gitops/argocd/install --server-side
           kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+          bash hack/audit-secrets.sh
           kubectl apply -f gitops/argocd/root.yaml
       - run: go test -tags=e2e ./... -v -count=1 -timeout 60m
         working-directory: e2e
+        env:
+          KILN_AUDIT_JWT_PRIVATE_KEY: ${{ github.workspace }}/hack/keys/audit-jwt-private.pem
