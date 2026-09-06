@@ -22,7 +22,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: canary controller, statistical rollback logic.
   Exit criterion: injected synthetic regression triggers auto-rollback; injected noise does not false-trigger.
 
-- [ ] **Phase 5: Chaos module**
+- [x] **Phase 5: Chaos module**
   Scope: fault injection, SLO scoring, abort logic.
   Exit criterion: an experiment against a test service produces a resilience score; a forced SLO breach triggers auto-abort within the defined threshold.
 

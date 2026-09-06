@@ -71,14 +71,21 @@ Decisions that shaped the Phase 2 implementation: [ADR-0005](decisions/0005-data
 
 ## 5. Chaos and resilience scoring module
 
-**Purpose:** on-demand or scheduled controlled failure injection against a target service, producing an automated resilience score against declared SLOs.
+**Purpose:** on-demand controlled failure injection against a target service, producing an automated resilience score against declared SLOs.
 
-**Stack:** Go, Kubernetes admission/controller APIs, Prometheus, OpenTelemetry, `tc`/`iptables` for network fault injection (latency, partition), pod-kill via the Kubernetes API.
+**Stack:** Go, controller-runtime, Prometheus (Istio's source-reported request metrics), `tc netem` and `iptables` for network faults, a cgroup-confined burner for resource exhaustion, pod deletion through the Kubernetes API.
+
+**Split of responsibility.** A controller Deployment owns the timeline and the decision; a privileged `kiln-chaos-agent` DaemonSet is the only thing that applies or reverts a network or cgroup fault, in the target pod's own namespaces on its node. Pod-kill is the controller's, done through the API. The two share nothing but the `ChaosExperiment` CR: the controller writes the selected pods and a renewed lease into status, and the agent reads them ([ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-lease-dead-man-switch.md)).
 
 **Design problems:**
 
-- **Blast-radius containment.** Every experiment has a hard scope (namespace, label selector, max percentage of replicas) and a kill switch that reverts all injected faults immediately on SLO breach. This is a safety system before it's a testing tool, treated accordingly.
-- **Abort logic.** The SLO breach threshold that auto-aborts an experiment is defined per-service, not global, since acceptable degradation varies by service criticality.
+- **Blast-radius containment, enforced by the mechanism.** The scope (namespace, label selector, `maxReplicaPercentage`) is not a check the controller performs and the injector trusts. The agent re-derives it from its own cluster read before touching any pod: it recomputes the matching pods, floors the cap to whole pods, and faults at most that many, deterministically, dropping any that no longer match. A cap that floors to zero pods is rejected rather than rounded up, and an experiment may only target its own namespace, enforced at admission by a fail-closed Kyverno policy as well as by the controller.
+- **Abort as a safety system, not a status field.** `abortOnSLOBreach` is required and cannot be disabled per experiment. The controller reads the SLOs every five seconds; a single window over either bound aborts at once, with no debounce, because a false abort is the safe failure. Abort is real only when the faults are gone: the controller stops renewing the lease, and every agent reverts within a second. What proves it is the node, the `tc` qdisc and the `iptables` rules cleared inside the pod's namespace and pods no longer being killed, never the CR reading `Aborted`.
+- **A fault cannot outlive its controller.** Each fault carries a lease the controller renews every interval; if the controller crashes, is partitioned, or is deleted, the lease lapses and a per-node sweeper reverts the fault with no controller involvement. A finalizer holds a deleted experiment until the lease has lapsed, and an agent that restarts replays its on-disk ledger and reverts before serving. Four independent triggers revert a fault: the phase leaving `Running`, the CR being deleted, the lease lapsing, and the experiment's own deadline.
+- **Seeing the fault at all.** A `netem` delay is added after the destination sidecar has timed the request, and a partitioned pod reports nothing, so the abort logic reads Istio's source-reported metrics, what the meshed callers actually experienced; the target and its callers must be meshed. No injection begins before a baseline snapshot is read, and an experiment that loses metrics for the timeout aborts rather than running blind, the same fail-closed stance Phase 4 took.
+- **The resilience score.** Mean SLO headroom while the fault was live, plus how quickly the service returned within its SLOs once the fault was removed ([ADR-0016](decisions/0016-resilience-score-is-slo-headroom-plus-recovery.md)); an aborted experiment scores zero.
+
+Decisions: [ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-lease-dead-man-switch.md) (agent safety model, lease dead-man switch, blast-radius enforcement), [ADR-0016](decisions/0016-resilience-score-is-slo-headroom-plus-recovery.md) (the score). The `ChaosExperiment` CRD is delivered with the rest of the platform ([ADR-0012](decisions/0012-platform-app-delivers-every-module-crd.md)).
 
 ## 6. Audit, compliance, and RBAC service
 

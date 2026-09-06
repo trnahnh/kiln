@@ -137,28 +137,59 @@ Phases: `Initializing` clones primary and parks the target; `Succeeded` and `Rol
 
 ## ChaosExperiment CRD
 
-Owned by the Chaos/resilience module.
+Owned by the Chaos/resilience module ([`SYSTEM_DESIGN.md#5`](SYSTEM_DESIGN.md#5-chaos-and-resilience-scoring-module)).
 
 ```yaml
 apiVersion: platform.internal/v1
 kind: ChaosExperiment
 metadata:
   name: checkout-service-partition-test
+  namespace: team-checkout
 spec:
   target:
-    namespace: team-checkout
+    namespace: team-checkout      # optional; must equal the experiment's namespace, unset means it
     labelSelector: app=checkout-service
-    maxReplicaPercentage: 30
-  faultType: network-partition   # pod-kill | network-partition | latency-injection | resource-exhaustion
+    maxReplicaPercentage: 30      # floored to whole pods; an experiment that floors to zero is rejected
+  faultType: network-partition    # pod-kill | network-partition | latency-injection | resource-exhaustion
   duration: 5m
-  abortOnSLOBreach:
+  abortOnSLOBreach:               # required; cannot be disabled per experiment
     errorRateMax: 0.05
-    latencyP99MaxMs: 1000
+    latencyP99MaxMs: 1000         # a window breaches if more than 1% of requests are slower
+  fault:                          # optional; per-type parameters, defaults shown
+    latencyMs: 500                # latency-injection: delay added to the pod's egress
+    jitterMs: 50                  # latency-injection
+    cpuPercent: 100               # resource-exhaustion: share of the container's CPU limit
+    memoryMiB: 0                  # resource-exhaustion: memory allocated in the container's cgroup
+    interval: 30s                 # pod-kill: how often a fresh selection of up to the cap is deleted
+  analysis:                       # optional; defaults shown
+    interval: 5s                  # how often the SLOs are polled
+    window: 15s                   # length of one metric window; matches the Prometheus scrape
+    minSampleSize: 20             # requests a window must hold before it is judged
+    recoveryWindows: 4            # windows observed after the fault is removed, for the recovery score
 status:
-  phase: Running          # Scheduled | Running | Aborted | Completed
-  resilienceScore: null
-  abortReason: null
+  phase: Running                  # Scheduled | Running | Aborted | Completed
+  reason: Running
+  abortReason: null               # SLOBreach | MetricsUnavailable when aborted
+  resilienceScore: null           # 0 to 100 once ended; 0 when aborted (ADR-0016)
+  startedAt: "2026-09-05T18:00:00Z"
+  faultEndsAt: "2026-09-05T18:05:00Z"   # startedAt + duration; fault removed here unless aborted earlier
+  faultEndedAt: null              # when every injected fault was confirmed gone
+  leaseExpiresAt: "2026-09-05T18:00:15Z"  # renewed each interval; agents revert once it lapses
+  kills: 0                        # pod-kill count
+  targets:                        # the blast-radius record; length never exceeds floor(cap x matching)
+    - {pod: checkout-service-abc, uid: "...", node: node-1, state: Selected}
+  analysis:                       # persisted so a restarted controller resumes
+    faultWindows: 8
+    headroomTotal: 7.4
+    worstErrorRate: 0.012
+    worstSlowFraction: 0.004
+    recoveredAfter: 0             # index of the first post-fault window within SLO; unset until one is
+  conditions:
+    - {type: Ready, status: "True", reason: Running}
+    - {type: FaultsCleared, status: "False", reason: FaultsLive}
 ```
+
+**Phases:** `Scheduled` (admitted, waiting for pods, a baseline metric snapshot, or an overlapping experiment on the same pods) `-> Running` (faults live, lease renewed each interval) `-> Completed` (the fault ran its course; score set) or `-> Aborted` (an SLO breach or lost metrics; faults reverted, score 0). `FaultsCleared` becomes true only once the lease has lapsed, so every agent has provably reverted. A `ChaosExperiment` carries a finalizer and is held on delete until the lease lapses. The spec is immutable; change an experiment by creating a new one. Blast radius, abort, and score are enforced by the agent and controller as described in [ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-lease-dead-man-switch.md) and [ADR-0016](decisions/0016-resilience-score-is-slo-headroom-plus-recovery.md); the abort uses the `SLO_BREACH_ABORT` error code.
 
 ## Scheduler placement contract
 

@@ -19,7 +19,7 @@ Full problem writeup and the baseline this platform is measured against: [`docs/
 | Policy | Validates every request against org rules before it reaches the operator | OPA, Kyverno |
 | Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing | Go, Kubernetes scheduler framework |
 | Progressive delivery | Canary rollout with automatic, statistically-gated rollback | Go, Istio, Prometheus |
-| Chaos / resilience | On-demand controlled failure injection with an automated SLO-based score | Go, OpenTelemetry, tc/iptables |
+| Chaos / resilience | On-demand controlled failure injection with an automated SLO-based score | Go, Istio/Prometheus, tc/iptables |
 | Audit / RBAC | Tamper-evident audit trail and access control in front of the whole platform | Java, Spring Boot, Kafka, PostgreSQL |
 
 Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md).
@@ -86,14 +86,16 @@ kubectl patch storageclass standard -p '{"allowVolumeExpansion":true}'
 # 2. Stand up observability
 kubectl apply -f gitops/observability/
 
-# 3. Build the cost-aware scheduler and the delivery controller images and hand them
-#    to kind; ArgoCD deploys them but never pulls them
+# 3. Build the cost-aware scheduler, the delivery controller and the chaos images and
+#    hand them to kind; ArgoCD deploys them but never pulls them
 make -C scheduler-plugin docker-build kind-load
 make -C delivery-controller docker-build kind-load
+make -C chaos docker-build kind-load
 
-# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase and CanaryRollout CRDs,
-#    Crossplane, Kyverno, Istio, the kiln-scheduler, the delivery controller, the
-#    DatabaseClaim composition, the admission policies and tenant claims
+# 4. Bootstrap ArgoCD; from here Git installs the TenantDatabase, CanaryRollout and
+#    ChaosExperiment CRDs, Crossplane, Kyverno, Istio, the kiln-scheduler, the delivery
+#    controller, the chaos controller and agent, the DatabaseClaim composition, the
+#    admission policies and tenant claims
 kubectl apply -k gitops/argocd/install --server-side
 kubectl -n argocd rollout status statefulset/argocd-application-controller
 kubectl apply -f gitops/argocd/root.yaml
@@ -107,6 +109,8 @@ Pods opt into cost-aware placement with `schedulerName: kiln-scheduler` and decl
 Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/`; the org rules it must satisfy live in `gitops/policies`.
 
 Roll a Deployment out as a canary by labelling its namespace `istio-injection=enabled`, giving it a Service of the same name, and creating a `CanaryRollout` that names it; every later change to its pod template is analysed and either promoted or rolled back. Schema in `docs/API_REFERENCE.md`.
+
+Run a chaos experiment against a meshed service (target and callers in an `istio-injection=enabled` namespace) by creating a `ChaosExperiment` that selects its pods, names a fault type, and declares the SLOs that auto-abort it. The blast radius is capped at `maxReplicaPercentage` of the matching pods, enforced by the node agent; the experiment produces a resilience score, and a breach of `abortOnSLOBreach` reverts every fault within a bounded window. Schema in `docs/API_REFERENCE.md`.
 
 ### Changing a CRD
 
