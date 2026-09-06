@@ -35,8 +35,10 @@ func auditOutcomes(ns, name string) func() []string {
 	resource := audit.ResourceRef("ChaosExperiment", ns, name)
 	return func() []string {
 		var out []string
+		seen := map[string]bool{}
 		for _, e := range auditLog.Events() {
-			if e.Resource == resource {
+			if e.Resource == resource && !seen[e.EventID] {
+				seen[e.EventID] = true
 				out = append(out, e.Details["outcome"].(string)+"@"+e.EventID)
 			}
 		}

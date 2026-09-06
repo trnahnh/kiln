@@ -27,11 +27,14 @@ const (
 	tick    = 200 * time.Millisecond
 )
 
-// auditOutcomes lists "action/outcome" for every event published about the rollout, in order.
+// auditOutcomes lists "action/outcome" for every distinct event published about the
+// rollout, in order; a transition reconciled twice republishes the same eventId.
 func auditOutcomes() []string {
 	var out []string
+	seen := map[string]bool{}
 	for _, e := range auditLog.Events() {
-		if e.Resource == audit.ResourceRef("CanaryRollout", ns, appName) {
+		if e.Resource == audit.ResourceRef("CanaryRollout", ns, appName) && !seen[e.EventID] {
+			seen[e.EventID] = true
 			out = append(out, e.Action+"/"+e.Details["outcome"].(string))
 		}
 	}
