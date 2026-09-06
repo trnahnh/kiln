@@ -1,0 +1,372 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: chaosexperiments.platform.internal
+spec:
+  group: platform.internal
+  names:
+    kind: ChaosExperiment
+    listKind: ChaosExperimentList
+    plural: chaosexperiments
+    singular: chaosexperiment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.faultType
+      name: Fault
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .status.resilienceScore
+      name: Score
+      type: number
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              abortOnSLOBreach:
+                description: |-
+                  SLO the experiment must not push the target past. Both bounds are required: an
+                  experiment cannot opt out of aborting.
+                properties:
+                  errorRateMax:
+                    description: Highest acceptable fraction of failed requests in
+                      a window, as seen by the callers.
+                    maximum: 1
+                    minimum: 0
+                    type: number
+                  latencyP99MaxMs:
+                    description: Highest acceptable p99 latency; at most 1% of requests
+                      in a window may be slower.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - errorRateMax
+                - latencyP99MaxMs
+                type: object
+              analysis:
+                properties:
+                  interval:
+                    description: How often the SLO counters are read. Unset means
+                      5s.
+                    type: string
+                  minSampleSize:
+                    description: |-
+                      Requests a window must hold before it is judged; smaller windows merge into the next.
+                      Unset means 20.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  recoveryWindows:
+                    description: |-
+                      Windows observed after the fault is removed, for the recovery term of the score.
+                      Unset means 4.
+                    format: int32
+                    maximum: 20
+                    minimum: 1
+                    type: integer
+                  window:
+                    description: Length of one metric window; matches the Prometheus
+                      scrape interval. Unset means 15s.
+                    type: string
+                type: object
+              duration:
+                description: |-
+                  How long the fault stays injected. Agents revert on this deadline by their own clock
+                  whatever the controller does.
+                type: string
+              fault:
+                properties:
+                  cpuPercent:
+                    description: |-
+                      resource-exhaustion: share of the container's CPU limit the burner competes for.
+                      Unset means 100.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  interval:
+                    description: 'pod-kill: how often a fresh selection of up to the
+                      cap is deleted. Unset means 30s.'
+                    type: string
+                  jitterMs:
+                    description: 'latency-injection: random variation around latencyMs.
+                      Unset means 50.'
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  latencyMs:
+                    description: 'latency-injection: delay added to every packet the
+                      pod sends. Unset means 500.'
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  memoryMiB:
+                    description: |-
+                      resource-exhaustion: memory the burner allocates inside the container's cgroup.
+                      Unset means 0.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              faultType:
+                enum:
+                - pod-kill
+                - network-partition
+                - latency-injection
+                - resource-exhaustion
+                type: string
+              target:
+                properties:
+                  labelSelector:
+                    description: Label selector in the `key=value,key in (a,b)` syntax
+                      choosing the pods in scope.
+                    minLength: 1
+                    type: string
+                  maxReplicaPercentage:
+                    description: |-
+                      Upper bound on the share of matching pods a fault may touch at once, floored to whole
+                      pods; an experiment that floors to zero pods is rejected rather than rounded up.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  namespace:
+                    description: |-
+                      Must be the experiment's own namespace; unset means exactly that. An experiment may
+                      never reach into another namespace.
+                    type: string
+                required:
+                - labelSelector
+                - maxReplicaPercentage
+                type: object
+            required:
+            - abortOnSLOBreach
+            - duration
+            - faultType
+            - target
+            type: object
+            x-kubernetes-validations:
+            - message: spec is immutable; create a new experiment
+              rule: self == oldSelf
+          status:
+            properties:
+              abortReason:
+                type: string
+              abortedAt:
+                format: date-time
+                type: string
+              analysis:
+                description: Persisted so a controller restart resumes the experiment
+                  instead of rescoring from zero.
+                properties:
+                  faultWindows:
+                    format: int32
+                    type: integer
+                  headroomTotal:
+                    type: number
+                  lastCounters:
+                    properties:
+                      at:
+                        format: date-time
+                        type: string
+                      errors:
+                        type: number
+                      requests:
+                        type: number
+                      slow:
+                        type: number
+                    required:
+                    - at
+                    - errors
+                    - requests
+                    - slow
+                    type: object
+                  lastWindowAt:
+                    description: When the last window with enough samples was judged.
+                    format: date-time
+                    type: string
+                  recoveredAfter:
+                    description: Zero-based index of the first post-fault window within
+                      the SLO; unset until one is.
+                    format: int32
+                    type: integer
+                  recoveryWindows:
+                    format: int32
+                    type: integer
+                  worstErrorRate:
+                    type: number
+                  worstSlowFraction:
+                    type: number
+                type: object
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              faultEndedAt:
+                description: When every injected fault was confirmed gone.
+                format: date-time
+                type: string
+              faultEndsAt:
+                description: startedAt plus duration; the fault is removed at this
+                  time unless aborted earlier.
+                format: date-time
+                type: string
+              kills:
+                format: int32
+                type: integer
+              lastKillAt:
+                format: date-time
+                type: string
+              leaseExpiresAt:
+                description: Renewed by the controller every analysis interval; agents
+                  revert once it lapses.
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Scheduled
+                - Running
+                - Aborted
+                - Completed
+                type: string
+              reason:
+                type: string
+              resilienceScore:
+                description: 0 to 100 once the experiment has ended; unset while it
+                  runs.
+                type: number
+              startedAt:
+                format: date-time
+                type: string
+              targets:
+                items:
+                  description: |-
+                    A pod the controller put in scope. The list is the blast-radius record: its length can
+                    never exceed floor(maxReplicaPercentage x matching pods). The controller owns it; agents
+                    only read it, re-validate scope against their own API read, and enforce the fault. What
+                    actually happened to a pod is proven from the node, not from this field.
+                  properties:
+                    container:
+                      description: Container whose cgroup a resource-exhaustion burner
+                        joins.
+                      type: string
+                    node:
+                      type: string
+                    pod:
+                      type: string
+                    state:
+                      enum:
+                      - Selected
+                      - Reverted
+                      type: string
+                    uid:
+                      type: string
+                  required:
+                  - node
+                  - pod
+                  - uid
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - pod
+                x-kubernetes-list-type: map
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
