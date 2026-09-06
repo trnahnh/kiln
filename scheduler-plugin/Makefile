@@ -23,8 +23,8 @@ bench: setup-envtest ## Placement latency: Score micro-benchmarks and the envtes
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -tags=perf ./test/perf/ -run xxx -bench . -benchtime=1x -timeout 30m -v
 
 .PHONY: docker-build
-docker-build: ## Build the scheduler image.
-	docker build -t $(IMG) .
+docker-build: ## Build the scheduler image; the context is the repo root so the shared audit module is on hand.
+	docker build -t $(IMG) -f Dockerfile ..
 
 .PHONY: kind-load
 kind-load: ## Load the image into the kind cluster so the ArgoCD-managed Deployment can start it.

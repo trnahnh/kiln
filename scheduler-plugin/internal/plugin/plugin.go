@@ -4,14 +4,19 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/component-base/metrics/legacyregistry"
 	resourcehelper "k8s.io/component-helpers/resource"
+	"k8s.io/klog/v2"
 	fwk "k8s.io/kube-scheduler/framework"
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 
+	"github.com/trnahnh/kiln/audit"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/pricing"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/scoring"
 )
@@ -27,21 +32,32 @@ const (
 	stateKey fwk.StateKey = "CostAware"
 )
 
-// Args is the pluginConfig payload; all three weights must be given and sum to 100.
+// Args is the pluginConfig payload; all three weights must be given and sum to 100. Audit
+// names the Kafka brokers every binding is published to; empty disables publishing.
 type Args struct {
 	metav1.TypeMeta `json:",inline"`
 	Weights         scoring.Weights `json:"weights"`
+	Audit           AuditArgs       `json:"audit"`
 }
+
+type AuditArgs struct {
+	Brokers []string `json:"brokers"`
+	Topic   string   `json:"topic"`
+}
+
+const controllerName = "kiln-scheduler"
 
 type CostAware struct {
 	source  pricing.Source
 	weights scoring.Weights
+	audit   audit.Publisher
 }
 
 var (
 	_ fwk.FilterPlugin      = &CostAware{}
 	_ fwk.PreScorePlugin    = &CostAware{}
 	_ fwk.ScorePlugin       = &CostAware{}
+	_ fwk.PostBindPlugin    = &CostAware{}
 	_ fwk.EnqueueExtensions = &CostAware{}
 )
 
@@ -55,11 +71,44 @@ func New(_ context.Context, obj runtime.Object, _ fwk.Handle) (fwk.Plugin, error
 	if err := args.Weights.Validate(); err != nil {
 		return nil, fmt.Errorf("%s args: %w", Name, err)
 	}
-	return NewWithSource(pricing.NodeLabels{}, args.Weights), nil
+	publisher, err := newPublisher(args.Audit)
+	if err != nil {
+		return nil, fmt.Errorf("%s audit: %w", Name, err)
+	}
+	p := NewWithSource(pricing.NodeLabels{}, args.Weights)
+	p.audit = publisher
+	return p, nil
 }
 
 func NewWithSource(source pricing.Source, weights scoring.Weights) *CostAware {
-	return &CostAware{source: source, weights: weights}
+	return &CostAware{source: source, weights: weights, audit: audit.Discard{}}
+}
+
+// WithAudit routes SCHEDULE events to pub; tests pass an audit.Recorder.
+func (p *CostAware) WithAudit(pub audit.Publisher) *CostAware {
+	p.audit = pub
+	return p
+}
+
+// newPublisher wires the non-blocking audit producer (ADR-0017). The scheduler's own
+// registry is Prometheus-backed, so the publish counters land next to its metrics.
+func newPublisher(a AuditArgs) (audit.Publisher, error) {
+	if len(a.Brokers) == 0 {
+		klog.InfoS("audit publishing disabled: no audit.brokers in the CostAware args")
+		return audit.Discard{}, nil
+	}
+	var registerer prometheus.Registerer
+	if r, ok := legacyregistry.DefaultGatherer.(prometheus.Registerer); ok {
+		registerer = r
+	}
+	return audit.NewKafka(audit.Options{
+		Brokers:    a.Brokers,
+		Topic:      a.Topic,
+		Registerer: registerer,
+		OnFailure: func(e audit.Event, err error) {
+			klog.ErrorS(err, "audit event not published", "action", e.Action, "resource", e.Resource)
+		},
+	})
 }
 
 func (p *CostAware) Name() string { return Name }
@@ -127,6 +176,24 @@ func (p *CostAware) Score(_ context.Context, state fwk.CycleState, pod *v1.Pod, 
 }
 
 func (p *CostAware) ScoreExtensions() fwk.ScoreExtensions { return nil }
+
+// PostBind runs only for a pod this scheduler actually bound, so every SCHEDULE event is a
+// placement that happened rather than one that was scored.
+func (p *CostAware) PostBind(_ context.Context, _ fwk.CycleState, pod *v1.Pod, nodeName string) {
+	resource := audit.ResourceRef("Pod", pod.Namespace, pod.Name)
+	p.audit.Publish(audit.Event{
+		EventID:   audit.DeterministicID(resource, audit.ActionSchedule, string(pod.UID), nodeName),
+		Actor:     audit.ActorOf(pod.Annotations, controllerName),
+		Action:    audit.ActionSchedule,
+		Resource:  resource,
+		Timestamp: time.Now(),
+		Details: map[string]any{
+			"outcome":       "Bound",
+			"node":          nodeName,
+			"workloadClass": string(scoring.ParseClass(pod.Labels[LabelWorkloadClass])),
+		},
+	})
+}
 
 // EventsToRegister: a node whose economics labels change may become feasible or cheaper.
 func (p *CostAware) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWithHint, error) {

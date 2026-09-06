@@ -28,6 +28,9 @@ data:
             disabled:
               - name: NodeResourcesFit
               - name: NodeResourcesBalancedAllocation
+          postBind:
+            enabled:
+              - name: CostAware
         pluginConfig:
           - name: CostAware
             args:
@@ -35,3 +38,6 @@ data:
                 cost: 50
                 fragmentation: 30
                 preemption: 20
+              audit:
+                brokers: ["kafka.kiln-kafka.svc:9092"]
+                topic: kiln.audit

@@ -11,6 +11,7 @@ import (
 	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 
+	"github.com/trnahnh/kiln/audit"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/pricing"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/scoring"
 )
@@ -154,5 +155,50 @@ func TestScoreWithoutPreScoreStillWorks(t *testing.T) {
 	s, st := p.Score(context.Background(), framework.NewCycleState(), testPod("batch", "500m", "1Gi"), nodeInfo("spot", spotLabels("0.03")))
 	if !st.IsSuccess() || s <= 0 {
 		t.Fatalf("got score=%d status=%v", s, st)
+	}
+}
+
+func TestPostBindPublishesOneScheduleEventPerBinding(t *testing.T) {
+	rec := &audit.Recorder{}
+	p := NewWithSource(pricing.NodeLabels{}, scoring.DefaultWeights()).WithAudit(rec)
+	pod := testPod("batch", "500m", "1Gi")
+	pod.UID = "uid-1"
+	pod.Annotations = map[string]string{audit.AnnotationRequestedBy: "dev@company.com"}
+
+	p.PostBind(context.Background(), framework.NewCycleState(), pod, "spot-a")
+	p.PostBind(context.Background(), framework.NewCycleState(), pod, "spot-a")
+
+	events := rec.Events()
+	if len(events) != 2 || events[0].EventID != events[1].EventID {
+		t.Fatalf("a repeated bind of the same pod to the same node must carry one eventId: %+v", events)
+	}
+	e := events[0]
+	if e.Action != audit.ActionSchedule || e.Resource != "Pod/default/p" || e.Actor != "dev@company.com" {
+		t.Fatalf("unexpected event %+v", e)
+	}
+	if e.Details["outcome"] != "Bound" || e.Details["node"] != "spot-a" || e.Details["workloadClass"] != "batch" {
+		t.Fatalf("unexpected details %v", e.Details)
+	}
+
+	unlabelled := testPod("", "500m", "1Gi")
+	unlabelled.UID = "uid-2"
+	p.PostBind(context.Background(), framework.NewCycleState(), unlabelled, "od-a")
+	last := rec.Events()[2]
+	if last.Actor != "system:kiln-scheduler" || last.Details["workloadClass"] != "latency-sensitive" {
+		t.Fatalf("unlabelled pod must be attributed to the scheduler and default to latency-sensitive: %+v", last)
+	}
+	if last.EventID == e.EventID {
+		t.Fatal("different pods must not share an eventId")
+	}
+}
+
+func TestNewWithoutBrokersDiscardsAudit(t *testing.T) {
+	raw := &runtime.Unknown{Raw: []byte(`{"weights":{"cost":50,"fragmentation":30,"preemption":20},"audit":{"brokers":[]}}`), ContentType: runtime.ContentTypeJSON}
+	p, err := New(context.Background(), raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.(*CostAware).audit.(audit.Discard); !ok {
+		t.Fatalf("no brokers must mean a Discard publisher, got %T", p.(*CostAware).audit)
 	}
 }

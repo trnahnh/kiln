@@ -1,9 +1,11 @@
 FROM golang:1.26 AS builder
+ENV GOWORK=off
 WORKDIR /workspace
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o kiln-scheduler ./cmd/kiln-scheduler
+COPY audit/ audit/
+COPY scheduler-plugin/go.mod scheduler-plugin/go.sum scheduler-plugin/
+RUN cd scheduler-plugin && go mod download
+COPY scheduler-plugin/ scheduler-plugin/
+RUN cd scheduler-plugin && CGO_ENABLED=0 GOOS=linux go build -o /workspace/kiln-scheduler ./cmd/kiln-scheduler
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
