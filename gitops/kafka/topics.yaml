@@ -1,0 +1,33 @@
+# Creates the audit topic explicitly, one partition (API_REFERENCE.md, "Audit event schema"),
+# so the chain never depends on auto-creation defaults. Idempotent; wave 1 runs it once
+# the broker in wave 0 is healthy.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics
+  namespace: kiln-kafka
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: topics
+          image: apache/kafka:3.9.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka.kiln-kafka.svc:9092 >/dev/null 2>&1; do
+                echo "waiting for the broker"; sleep 3
+              done
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka.kiln-kafka.svc:9092 \
+                --create --if-not-exists --topic kiln.audit --partitions 1 --replication-factor 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
