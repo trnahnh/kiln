@@ -159,7 +159,7 @@ func Tick(cfg Config, st *State, now time.Time, stage Stage, w Window, ok bool) 
 	return d
 }
 
-// Score is 0 to 100: mean SLO headroom while the fault was live, and how quickly the
+// Score is 0 to 100 (ADR-0016): mean SLO headroom while the fault was live, and how quickly the
 // service was back within its SLO afterwards. A fault phase that never produced a judged
 // window earns no headroom credit.
 func Score(cfg Config, st State) float64 {

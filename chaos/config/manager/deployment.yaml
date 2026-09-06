@@ -132,7 +132,7 @@ spec:
 # The agent injects tc/iptables faults inside target pods' network namespaces and joins
 # their cgroups, so it must be privileged and share the host PID namespace. Its blast
 # radius is bounded by the ChaosExperiment CRs it reads, not by what it could technically
-# reach (ADR-0016).
+# reach (ADR-0015).
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
