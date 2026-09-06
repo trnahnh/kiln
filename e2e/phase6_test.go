@@ -68,6 +68,7 @@ type auditHarness struct {
 	cs  *kubernetes.Clientset
 	ns  string
 	key *rsa.PrivateKey
+	runID int64
 
 	expected []expectedEvent
 	base     string
@@ -106,7 +107,8 @@ func TestPhase6Audit(t *testing.T) {
 	cs, err := kubernetes.NewForConfig(cfg)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	h := &auditHarness{t: t, g: g, ctx: ctx, cfg: cfg, c: c, cs: cs, ns: "audit-e2e"}
+	runID := time.Now().Unix()
+	h := &auditHarness{t: t, g: g, ctx: ctx, cfg: cfg, c: c, cs: cs, ns: fmt.Sprintf("audit-e2e-%d", runID), runID: runID}
 	h.loadSigningKey()
 	h.waitForAudit()
 	h.allowVolumeExpansion()
@@ -392,7 +394,7 @@ func (h *auditHarness) testSchedule(t *testing.T) {
 // testDelivery reuses the Phase 4 harness in its own mesh namespace: the broken version's
 // rollback is proven on the mesh there, and here it must also be in the audit log.
 func (h *auditHarness) testDelivery(t *testing.T) {
-	ch := &canaryHarness{t: t, g: NewWithT(t), ctx: h.ctx, cfg: h.cfg, c: h.c, cs: h.cs, ns: "audit-canary", start: map[string]time.Time{}}
+	ch := &canaryHarness{t: t, g: NewWithT(t), ctx: h.ctx, cfg: h.cfg, c: h.c, cs: h.cs, ns: fmt.Sprintf("audit-canary-%d", h.runID), start: map[string]time.Time{}}
 	ch.createMeshNamespace()
 	t.Cleanup(ch.deleteNamespace)
 	ch.deployTarget()
@@ -405,7 +407,7 @@ func (h *auditHarness) testDelivery(t *testing.T) {
 
 // testChaos reuses the Phase 5 harness for one pod-kill experiment.
 func (h *auditHarness) testChaos(t *testing.T) {
-	ch := &chaosHarness{t: t, g: NewWithT(t), ctx: h.ctx, c: h.c, cs: h.cs, ns: "audit-chaos"}
+	ch := &chaosHarness{t: t, g: NewWithT(t), ctx: h.ctx, c: h.c, cs: h.cs, ns: fmt.Sprintf("audit-chaos-%d", h.runID)}
 	ch.createMeshNamespace()
 	t.Cleanup(ch.deleteNamespace)
 	ch.deployTarget()
@@ -494,9 +496,7 @@ func (h *auditHarness) testRedelivery(t *testing.T) {
 	rowsBefore := h.readRows()
 	dupID, _ := rec.event["eventId"].(string)
 	g.Expect(countRows(rowsBefore, dupID)).To(Equal(1))
-
-	h.produce(rec.key, rec.value)
-	g.Eventually(func() int {
+	onTopic := func() int {
 		n := 0
 		for _, r := range h.readTopic() {
 			if r.event["eventId"] == dupID {
@@ -504,7 +504,11 @@ func (h *auditHarness) testRedelivery(t *testing.T) {
 			}
 		}
 		return n
-	}, time.Minute, 5*time.Second).Should(Equal(2), "the redelivery must actually be on the topic")
+	}
+	before := onTopic()
+
+	h.produce(rec.key, rec.value)
+	g.Eventually(onTopic, time.Minute, 5*time.Second).Should(Equal(before+1), "the redelivery must actually be on the topic")
 
 	g.Consistently(func() int { return countRows(h.readRows(), dupID) }, 30*time.Second, 10*time.Second).Should(Equal(1), "a redelivered record must not add a row")
 	rowsAfter := h.readRows()
@@ -516,23 +520,55 @@ func (h *auditHarness) testRedelivery(t *testing.T) {
 	t.Logf("row for %s still stored once after redelivery; %d rows in total", dupID, len(rowsAfter))
 }
 
-// testWriteBoundary proves the credential isolation from the API server's authoriser:
-// every publishing controller's ServiceAccount is a real identity (it may read its own
-// kind) and none may read the writer credential.
+// testWriteBoundary proves the credential isolation from the API server's authoriser and
+// the pod specs: every publishing controller's ServiceAccount is a real identity (it may
+// list its own kind); the three without any Secret role cannot read the writer credential;
+// and no publisher's pod references it. The operator holds a cluster-wide Secret role to
+// create tenant credentials, which RBAC cannot scope away from one namespace, so for it
+// the proof is the pod spec and the NetworkPolicy (DATA_MODEL.md, "Write boundary").
 func (h *auditHarness) testWriteBoundary(t *testing.T) {
 	g := NewWithT(t)
 	subjects := []struct {
-		sa, ownGroup, ownResource string
+		ns, name, ownGroup, ownResource string
+		secretRole                      bool
 	}{
-		{"system:serviceaccount:kiln-operator-system:kiln-operator-controller-manager", "platform.internal", "tenantdatabases"},
-		{"system:serviceaccount:kiln-delivery-system:kiln-delivery-controller", "platform.internal", "canaryrollouts"},
-		{"system:serviceaccount:kiln-chaos-system:kiln-chaos-controller", "platform.internal", "chaosexperiments"},
-		{"system:serviceaccount:kiln-scheduler-system:kiln-scheduler", "", "pods"},
+		{"kiln-operator-system", "kiln-operator-controller-manager", "platform.internal", "tenantdatabases", true},
+		{"kiln-delivery-system", "kiln-delivery-controller", "platform.internal", "canaryrollouts", false},
+		{"kiln-chaos-system", "kiln-chaos-controller", "platform.internal", "chaosexperiments", false},
+		{"kiln-scheduler-system", "kiln-scheduler", "", "pods", false},
 	}
 	for _, s := range subjects {
-		g.Expect(h.allowed(s.sa, s.ownGroup, s.ownResource, "", "list")).To(BeTrue(), "%s should be able to list %s; is the ServiceAccount name right?", s.sa, s.ownResource)
-		g.Expect(h.allowed(s.sa, "", "secrets", "audit-postgres", "get")).To(BeFalse(), "%s must not read the audit writer credential", s.sa)
+		sa := "system:serviceaccount:" + s.ns + ":" + s.name
+		g.Expect(h.allowed(sa, s.ownGroup, s.ownResource, "", "list")).To(BeTrue(), "%s should be able to list %s; is the ServiceAccount name right?", sa, s.ownResource)
+		g.Expect(h.allowed(sa, "", "secrets", "audit-postgres", "get")).To(Equal(s.secretRole), "%s: Secret access does not match its documented role", sa)
+		dep := &appsv1.Deployment{}
+		g.Expect(h.c.Get(h.ctx, types.NamespacedName{Namespace: s.ns, Name: s.name}, dep)).To(Succeed())
+		g.Expect(referencesSecret(dep.Spec.Template.Spec, "audit-postgres")).To(BeFalse(), "%s must not mount or read the writer credential", s.name)
 	}
+	np := &unstructured.Unstructured{}
+	np.SetGroupVersionKind(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"})
+	g.Expect(h.c.Get(h.ctx, types.NamespacedName{Namespace: auditNS, Name: "audit-postgres-writer-only"}, np)).To(Succeed(), "the network boundary must be delivered even where the CNI ignores it")
+}
+
+func referencesSecret(spec corev1.PodSpec, name string) bool {
+	for _, v := range spec.Volumes {
+		if v.Secret != nil && v.Secret.SecretName == name {
+			return true
+		}
+	}
+	for _, c := range append(spec.InitContainers, spec.Containers...) {
+		for _, e := range c.Env {
+			if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == name {
+				return true
+			}
+		}
+		for _, ef := range c.EnvFrom {
+			if ef.SecretRef != nil && ef.SecretRef.Name == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *auditHarness) allowed(user, group, resource, name, verb string) bool {
