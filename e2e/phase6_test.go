@@ -34,6 +34,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,14 +61,14 @@ const (
 )
 
 type auditHarness struct {
-	t   *testing.T
-	g   *WithT
-	ctx context.Context
-	cfg *rest.Config
-	c   client.Client
-	cs  *kubernetes.Clientset
-	ns  string
-	key *rsa.PrivateKey
+	t     *testing.T
+	g     *WithT
+	ctx   context.Context
+	cfg   *rest.Config
+	c     client.Client
+	cs    *kubernetes.Clientset
+	ns    string
+	key   *rsa.PrivateKey
 	runID int64
 
 	expected []expectedEvent
@@ -520,31 +521,44 @@ func (h *auditHarness) testRedelivery(t *testing.T) {
 	t.Logf("row for %s still stored once after redelivery; %d rows in total", dupID, len(rowsAfter))
 }
 
-// testWriteBoundary proves the credential isolation from the API server's authoriser and
-// the pod specs: every publishing controller's ServiceAccount is a real identity (it may
-// list its own kind); the three without any Secret role cannot read the writer credential;
-// and no publisher's pod references it. The operator holds a cluster-wide Secret role to
-// create tenant credentials, which RBAC cannot scope away from one namespace, so for it
-// the proof is the pod spec and the NetworkPolicy (DATA_MODEL.md, "Write boundary").
+// testWriteBoundary proves the API-level boundary from the authoriser and the pod specs:
+// every publishing controller's ServiceAccount is a real identity (it may list its own
+// kind), none may read the writer credential, the operator's Secret grant is create only
+// (ADR-0019), and no publisher's pod references the Secret. The NetworkPolicy is a separate,
+// network-level boundary and is only checked to be delivered.
 func (h *auditHarness) testWriteBoundary(t *testing.T) {
 	g := NewWithT(t)
 	subjects := []struct {
 		ns, name, ownGroup, ownResource string
-		secretRole                      bool
 	}{
-		{"kiln-operator-system", "kiln-operator-controller-manager", "platform.internal", "tenantdatabases", true},
-		{"kiln-delivery-system", "kiln-delivery-controller", "platform.internal", "canaryrollouts", false},
-		{"kiln-chaos-system", "kiln-chaos-controller", "platform.internal", "chaosexperiments", false},
-		{"kiln-scheduler-system", "kiln-scheduler", "", "pods", false},
+		{"kiln-operator-system", "kiln-operator-controller-manager", "platform.internal", "tenantdatabases"},
+		{"kiln-delivery-system", "kiln-delivery-controller", "platform.internal", "canaryrollouts"},
+		{"kiln-chaos-system", "kiln-chaos-controller", "platform.internal", "chaosexperiments"},
+		{"kiln-scheduler-system", "kiln-scheduler", "", "pods"},
 	}
 	for _, s := range subjects {
 		sa := "system:serviceaccount:" + s.ns + ":" + s.name
 		g.Expect(h.allowed(sa, s.ownGroup, s.ownResource, "", "list")).To(BeTrue(), "%s should be able to list %s; is the ServiceAccount name right?", sa, s.ownResource)
-		g.Expect(h.allowed(sa, "", "secrets", "audit-postgres", "get")).To(Equal(s.secretRole), "%s: Secret access does not match its documented role", sa)
+		for _, verb := range []string{"get", "list", "watch"} {
+			g.Expect(h.allowed(sa, "", "secrets", "audit-postgres", verb)).To(BeFalse(), "%s must not %s the audit writer credential", sa, verb)
+		}
 		dep := &appsv1.Deployment{}
 		g.Expect(h.c.Get(h.ctx, types.NamespacedName{Namespace: s.ns, Name: s.name}, dep)).To(Succeed())
 		g.Expect(referencesSecret(dep.Spec.Template.Spec, "audit-postgres")).To(BeFalse(), "%s must not mount or read the writer credential", s.name)
 	}
+	operatorSA := "system:serviceaccount:kiln-operator-system:kiln-operator-controller-manager"
+	g.Expect(h.allowed(operatorSA, "", "secrets", "", "create")).To(BeTrue(), "the operator still creates tenant credentials")
+	role := &rbacv1.ClusterRole{}
+	g.Expect(h.c.Get(h.ctx, types.NamespacedName{Name: "kiln-operator-manager-role"}, role)).To(Succeed())
+	var secretVerbs []string
+	for _, rule := range role.Rules {
+		for _, res := range rule.Resources {
+			if res == "secrets" {
+				secretVerbs = append(secretVerbs, rule.Verbs...)
+			}
+		}
+	}
+	g.Expect(secretVerbs).To(Equal([]string{"create"}), "the operator's Secret grant must be create only")
 	np := &unstructured.Unstructured{}
 	np.SetGroupVersionKind(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"})
 	g.Expect(h.c.Get(h.ctx, types.NamespacedName{Namespace: auditNS, Name: "audit-postgres-writer-only"}, np)).To(Succeed(), "the network boundary must be delivered even where the CNI ignores it")
