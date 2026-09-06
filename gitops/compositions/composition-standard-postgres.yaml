@@ -44,3 +44,10 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.parameters.tags.costCenter
                 toFieldPath: metadata.labels[platform.internal/cost-center]
+              # The audit service stamps the requester on the claim; carrying it to the
+              # TenantDatabase is what lets the operator name a real actor (ADR-0018).
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.annotations[platform.internal/requested-by]
+                toFieldPath: metadata.annotations[platform.internal/requested-by]
+                policy:
+                  fromFieldPath: Optional
