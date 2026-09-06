@@ -108,6 +108,21 @@ Request a database by committing a `DatabaseClaim` under `gitops/tenants/<team>/
 
 Roll a Deployment out as a canary by labelling its namespace `istio-injection=enabled`, giving it a Service of the same name, and creating a `CanaryRollout` that names it; every later change to its pod template is analysed and either promoted or rolled back. Schema in `docs/API_REFERENCE.md`.
 
+### Changing a CRD
+
+Git owns every CRD on the cluster: the `kiln-platform` Application delivers them from `origin/main` with `selfHeal` on (ADR-0012), so a CRD you `kubectl apply` locally is reverted at ArgoCD's next sync, usually within minutes. A schema change (a new field, a new phase, a new enum value) therefore only takes effect on the local cluster after it has been pushed to `origin/main`; until then the API server rejects the controller's writes that use it and a local end-to-end run fails for that reason alone. The workflow for any CRD change is: regenerate (`make manifests` in the module), prove the reconciler under `envtest` which loads the CRD from the working tree, commit, push, wait for `kiln-platform` to show Synced, then run the end-to-end test. CI always proves the change on a fresh cluster whether or not the local run happened.
+
+To iterate on a CRD locally without pushing, pause self-healing on the platform Application, apply the CRD by hand, and restore the policy when done:
+
+```bash
+kubectl -n argocd patch application kiln-platform --type=merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":false}}}}'
+kubectl apply -f <module>/config/crd/bases/
+# ... iterate ...
+kubectl -n argocd patch application kiln-platform --type=merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+```
+
+ArgoCD reports the Application OutOfSync while the local CRD differs from Git; that is expected and clears once the change is pushed.
+
 Note for Windows hosts: `crossplane render` (the offline composition check in `docs/TESTING.md`) has no Windows build and needs Docker. Locally it only works from WSL running as root with `DOCKER_HOST=unix:///mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.proxy.sock`. CI runs it natively on Linux with no such requirement.
 
 Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`](docs/ROADMAP.md).
