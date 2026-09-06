@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
 )
 
@@ -211,6 +212,31 @@ func eventsWithReason(ns, reason string) func() int {
 	}
 }
 
+// auditOutcomes lists the outcomes published for one action on tdb, in order, with the
+// eventIds so a test can assert a transition was published once even when reconciled twice.
+func auditOutcomes(tdb *platformv1.TenantDatabase, action string) func() []string {
+	resource := audit.ResourceRef("TenantDatabase", tdb.Namespace, tdb.Name)
+	return func() []string {
+		var out []string
+		for _, e := range auditLog.Events() {
+			if e.Resource == resource && e.Action == action {
+				out = append(out, e.Details["outcome"].(string)+"@"+e.EventID)
+			}
+		}
+		return out
+	}
+}
+
+func auditEvent(tdb *platformv1.TenantDatabase, action, outcome string) audit.Event {
+	resource := audit.ResourceRef("TenantDatabase", tdb.Namespace, tdb.Name)
+	for _, e := range auditLog.Events() {
+		if e.Resource == resource && e.Action == action && e.Details["outcome"] == outcome {
+			return e
+		}
+	}
+	return audit.Event{}
+}
+
 var _ = Describe("TenantDatabase reconciler", func() {
 	Context("provisioning", func() {
 		It("creates every owned resource, then becomes Ready when the StatefulSet is ready", func() {
@@ -258,6 +284,22 @@ var _ = Describe("TenantDatabase reconciler", func() {
 			ready := fetch(tdb)
 			Expect(meta.IsStatusConditionTrue(ready.Status.Conditions, platformv1.ConditionReady)).To(BeTrue())
 			Expect(ready.Status.ObservedGeneration).To(Equal(ready.Generation))
+
+			Eventually(auditOutcomes(tdb, audit.ActionProvision), timeout, interval).Should(HaveLen(1))
+			ev := auditEvent(tdb, audit.ActionProvision, "Ready")
+			Expect(ev.Actor).To(Equal("system:tenantdatabase"), "no requested-by annotation attributes the action to the controller")
+			Expect(ev.EventID).To(Equal(audit.DeterministicID(ev.Resource, audit.ActionProvision, string(ready.UID))))
+		})
+
+		It("attributes the provision to the requested-by annotation when present", func() {
+			ns := newNamespace()
+			tdb := newTenantDatabase(ns, "attributed")
+			tdb.Annotations = map[string]string{audit.AnnotationRequestedBy: "dev@company.com"}
+			Expect(k8sClient.Create(ctx, tdb)).To(Succeed())
+			Eventually(phaseOf(tdb), timeout, interval).Should(Equal(platformv1.PhaseProvisioning))
+			markStatefulSetReady(tdb)
+			Eventually(phaseOf(tdb), timeout, interval).Should(Equal(platformv1.PhaseReady))
+			Eventually(func() string { return auditEvent(tdb, audit.ActionProvision, "Ready").Actor }, timeout, interval).Should(Equal("dev@company.com"))
 		})
 
 		It("sends an unsupported engine to Failed without creating anything", func() {
@@ -375,6 +417,13 @@ var _ = Describe("TenantDatabase reconciler", func() {
 			Expect(done.Status.LastBackupTime).NotTo(BeNil())
 			Expect(done.Status.LastBackupTime.Time).To(BeTemporally("~", time.Now(), time.Minute))
 			Expect(meta.FindStatusCondition(done.Status.Conditions, platformv1.ConditionProgressing).Reason).To(Equal(platformv1.ReasonReconciled))
+
+			Eventually(auditOutcomes(tdb, audit.ActionBackup), timeout, interval).Should(HaveLen(2))
+			started := auditEvent(tdb, audit.ActionBackup, "Started")
+			succeeded := auditEvent(tdb, audit.ActionBackup, "Succeeded")
+			Expect(started.Details["backupId"]).To(Equal(job.Annotations[annotationBackupID]))
+			Expect(succeeded.Details["backupId"]).To(Equal(started.Details["backupId"]))
+			Expect(started.EventID).NotTo(Equal(succeeded.EventID))
 		})
 
 		It("returns to Ready with BackupFailed when the backup Job fails", func() {

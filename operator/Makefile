@@ -1,4 +1,5 @@
-IMG ?= controller:latest
+IMG ?= kiln-operator:dev
+KIND_CLUSTER ?= kiln-dev
 KUBECTL ?= kubectl
 LOCALBIN ?= $(shell pwd)/bin
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
@@ -56,8 +57,12 @@ run: manifests generate fmt vet ## Run the manager from the host against the cur
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: ## Build the manager image.
-	docker build -t ${IMG} .
+docker-build: ## Build the manager image; the context is the repo root so the shared audit module is on hand.
+	docker build -t ${IMG} -f Dockerfile ..
+
+.PHONY: kind-load
+kind-load: ## Load the image into the kind cluster so the ArgoCD-managed Deployment can start it.
+	kind load docker-image ${IMG} --name $(KIND_CLUSTER)
 
 ##@ Deployment
 

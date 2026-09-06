@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
 )
 
@@ -34,6 +35,7 @@ var (
 	cfg       *rest.Config
 	k8sClient client.Client
 	testClock = &fakeClock{}
+	auditLog  = &audit.Recorder{}
 )
 
 type fakeClock struct {
@@ -101,6 +103,7 @@ var _ = BeforeSuite(func() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tenantdatabase"),
 		Now:      testClock.Now,
+		Audit:    auditLog,
 	}
 	Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 

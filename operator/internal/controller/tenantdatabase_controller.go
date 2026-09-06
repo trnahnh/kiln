@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
 	"github.com/trnahnh/kiln/operator/internal/lifecycle"
 )
@@ -40,6 +41,7 @@ type TenantDatabaseReconciler struct {
 	Recorder record.EventRecorder
 	Commands Commands
 	Now      func() time.Time
+	Audit    audit.Publisher
 }
 
 // +kubebuilder:rbac:groups=platform.internal,resources=tenantdatabases,verbs=get;list;watch;create;update;patch;delete
@@ -118,6 +120,7 @@ func (r *TenantDatabaseReconciler) reconcileProvisioning(ctx context.Context, td
 	}
 	timeToReady.Observe(r.now().Sub(tdb.CreationTimestamp.Time).Seconds())
 	r.markSettled(tdb)
+	r.publish(tdb, audit.ActionProvision, map[string]any{"outcome": "Ready"}, string(tdb.UID))
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -153,12 +156,14 @@ func (r *TenantDatabaseReconciler) reconcileReady(ctx context.Context, tdb *plat
 			// The StorageClass refuses expansion or the claim is not bound yet: report it and
 			// keep retrying rather than backing off with a stack trace.
 			r.Recorder.Eventf(tdb, corev1.EventTypeWarning, platformv1.ReasonScaleFailed, "data volume resize rejected: %v", err)
+			r.publish(tdb, audit.ActionScale, map[string]any{"outcome": "Rejected", "from": current.String(), "to": desired.String(), "reason": err.Error()}, "Rejected", current.String(), desired.String())
 			setCondition(tdb, platformv1.ConditionReady, metav1.ConditionFalse, platformv1.ReasonScaling, "data volume resize pending")
 			setCondition(tdb, platformv1.ConditionProgressing, metav1.ConditionFalse, platformv1.ReasonScaleFailed, err.Error())
 			return ctrl.Result{RequeueAfter: pollInterval}, nil
 		}
 		log.Info("growing data volume", "from", current.String(), "to", desired.String())
 		r.Recorder.Eventf(tdb, corev1.EventTypeNormal, platformv1.ReasonScaling, "growing data volume from %s to %s", current.String(), desired.String())
+		r.publish(tdb, audit.ActionScale, map[string]any{"outcome": "Applied", "from": current.String(), "to": desired.String()}, "Applied", current.String(), desired.String())
 	}
 
 	wantsRestore := tdb.Annotations[platformv1.AnnotationRestoreFrom] != ""
@@ -310,6 +315,7 @@ func (r *TenantDatabaseReconciler) startOperation(ctx context.Context, tdb *plat
 		}
 	}
 	r.Recorder.Eventf(tdb, corev1.EventTypeNormal, "OperationStarted", "%s started (%s)", operation, backupID)
+	r.publish(tdb, auditAction(operation), map[string]any{"outcome": "Started", "backupId": backupID}, "Started", backupID)
 	return r.enterOperation(tdb, operation)
 }
 
@@ -329,6 +335,15 @@ func (r *TenantDatabaseReconciler) enterOperation(tdb *platformv1.TenantDatabase
 }
 
 func (r *TenantDatabaseReconciler) finishOperation(tdb *platformv1.TenantDatabase, operation string, succeeded bool, backupID string) error {
+	outcome := "Failed"
+	if succeeded {
+		outcome = "Succeeded"
+	}
+	idKey := backupID
+	if idKey == "" {
+		idKey = "unknown"
+	}
+	r.publish(tdb, auditAction(operation), map[string]any{"outcome": outcome, "backupId": backupID}, outcome, idKey)
 	switch {
 	case operation == operationBackup && succeeded:
 		if t, err := time.Parse(backupIDLayout, backupID); err == nil {
@@ -368,6 +383,14 @@ func (r *TenantDatabaseReconciler) fail(tdb *platformv1.TenantDatabase, reason, 
 	setCondition(tdb, platformv1.ConditionReady, metav1.ConditionFalse, reason, message)
 	setCondition(tdb, platformv1.ConditionProgressing, metav1.ConditionFalse, reason, message)
 	r.Recorder.Event(tdb, corev1.EventTypeWarning, reason, message)
+	r.publish(tdb, audit.ActionProvision, map[string]any{"outcome": "Failed", "reason": reason}, string(tdb.UID), reason)
+}
+
+func auditAction(operation string) string {
+	if operation == operationBackup {
+		return audit.ActionBackup
+	}
+	return audit.ActionRestore
 }
 
 // conflict records RECONCILE_CONFLICT (API_REFERENCE.md error codes); the event fires once

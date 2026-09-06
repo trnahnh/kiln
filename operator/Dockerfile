@@ -1,11 +1,11 @@
 FROM golang:1.26 AS builder
-ARG TARGETOS
-ARG TARGETARCH
+ENV GOWORK=off
 WORKDIR /workspace
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+COPY audit/ audit/
+COPY operator/go.mod operator/go.sum operator/
+RUN cd operator && go mod download
+COPY operator/ operator/
+RUN cd operator && CGO_ENABLED=0 GOOS=linux go build -a -o /workspace/manager ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
