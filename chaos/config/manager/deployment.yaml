@@ -92,6 +92,7 @@ spec:
       serviceAccountName: kiln-chaos-controller
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
