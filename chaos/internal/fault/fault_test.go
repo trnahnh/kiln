@@ -222,14 +222,14 @@ func TestJoinCgroupWritesThePIDIntoTheTargetsCgroup(t *testing.T) {
 	}
 }
 
-func TestBurnerStartsItselfInTheNodeCgroupNamespace(t *testing.T) {
+func TestBurnerStartsItselfAsASubprocess(t *testing.T) {
 	ex := &fakeExec{}
 	until := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	pid, err := (Burner{Exec: ex, Self: "/kiln-chaos", ContainerPID: 500, CPUPercent: 80, MemoryMiB: 64, Until: until}).Start(context.Background())
 	if err != nil || pid != 4242 {
 		t.Fatalf("pid %d, %v", pid, err)
 	}
-	want := "nsenter -t 1 -C -- /kiln-chaos burn --pid 500 --cpu-percent 80 --memory-mib 64 --until 2026-09-05T12:00:00Z"
+	want := "/kiln-chaos burn --pid 500 --cpu-percent 80 --memory-mib 64 --until 2026-09-05T12:00:00Z"
 	if len(ex.started) != 1 || ex.started[0] != want {
 		t.Fatalf("started %q", ex.started)
 	}

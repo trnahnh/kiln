@@ -13,9 +13,9 @@ import (
 )
 
 // Burner competes for the target container's CPU quota from inside its cgroup, so the
-// kernel's limit throttles the container and nothing else on the node. It is a separate
-// process entered into the node's cgroup namespace, because a process can only be moved
-// into a cgroup its own namespace can see.
+// kernel's limit throttles the container and nothing else on the node. The agent runs with
+// the host PID namespace, so a burner started as a child has a host PID and can move itself
+// into the target's cgroup by writing that PID.
 type Burner struct {
 	Exec         Exec
 	Self         string
@@ -26,7 +26,7 @@ type Burner struct {
 }
 
 func (b Burner) Start(ctx context.Context) (int, error) {
-	return b.Exec.Start(ctx, "nsenter", "-t", "1", "-C", "--", b.Self, "burn",
+	return b.Exec.Start(ctx, b.Self, "burn",
 		"--pid", strconv.Itoa(b.ContainerPID),
 		"--cpu-percent", strconv.Itoa(b.CPUPercent),
 		"--memory-mib", strconv.Itoa(b.MemoryMiB),
