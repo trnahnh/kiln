@@ -169,7 +169,7 @@ spec:
 status:
   phase: Running                  # Scheduled | Running | Aborted | Completed
   reason: Running
-  abortReason: null               # SLOBreach | MetricsUnavailable when aborted
+  abortReason: null               # SLOBreach | MetricsUnavailable | InjectionFailed when aborted
   resilienceScore: null           # 0 to 100 once ended; 0 when aborted (ADR-0016)
   startedAt: "2026-09-05T18:00:00Z"
   faultEndsAt: "2026-09-05T18:05:00Z"   # startedAt + duration; fault removed here unless aborted earlier
@@ -189,7 +189,7 @@ status:
     - {type: FaultsCleared, status: "False", reason: FaultsLive}
 ```
 
-**Phases:** `Scheduled` (admitted, waiting for pods, a baseline metric snapshot, or an overlapping experiment on the same pods) `-> Running` (faults live, lease renewed each interval) `-> Completed` (the fault ran its course; score set) or `-> Aborted` (an SLO breach or lost metrics; faults reverted, score 0). `FaultsCleared` becomes true only once the lease has lapsed, so every agent has provably reverted. A `ChaosExperiment` carries a finalizer and is held on delete until the lease lapses. The spec is immutable; change an experiment by creating a new one. Blast radius, abort, and score are enforced by the agent and controller as described in [ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-lease-dead-man-switch.md) and [ADR-0016](decisions/0016-resilience-score-is-slo-headroom-plus-recovery.md); the abort uses the `SLO_BREACH_ABORT` error code.
+**Phases:** `Scheduled` (admitted, waiting for pods, a baseline metric snapshot, or an overlapping experiment on the same pods) `-> Running` (faults live, lease renewed each interval) `-> Completed` (the fault ran its course; score set) or `-> Aborted` (an SLO breach, lost metrics, or a fault that could not be injected; faults reverted, score 0). `FaultsCleared` becomes true only once the lease has lapsed, so every agent has provably reverted. A `ChaosExperiment` carries a finalizer and is held on delete until the lease lapses. The spec is immutable; change an experiment by creating a new one. Blast radius, abort, and score are enforced by the agent and controller as described in [ADR-0015](decisions/0015-chaos-agent-enforces-blast-radius-with-a-lease-dead-man-switch.md) and [ADR-0016](decisions/0016-resilience-score-is-slo-headroom-plus-recovery.md); the abort uses the `SLO_BREACH_ABORT` error code.
 
 ## Scheduler placement contract
 
