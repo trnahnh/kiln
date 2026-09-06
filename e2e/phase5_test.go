@@ -331,7 +331,8 @@ func (h *chaosHarness) testExhaustionScored(t *testing.T) {
 	defer h.deleteExperiment(name)
 
 	g.Eventually(func() string { return h.phase(name) }, 3*time.Minute, poll).Should(Or(Equal("Completed"), Equal("Aborted")))
-	g.Expect(h.score(name)).NotTo(BeNil(), "resource-exhaustion produced no score")
+	g.Expect(h.hasScore(name)).To(BeTrue(), "resource-exhaustion produced no score")
+	g.Expect(h.score(name)).To(BeNumerically(">=", 0))
 	t.Logf("resource-exhaustion scored %.1f (%s)", h.score(name), h.phase(name))
 }
 
@@ -454,16 +455,30 @@ func (h *chaosHarness) abortReason(name string) string {
 	return v
 }
 
+// score returns -1 when the field is absent. A whole-number score can come back as int64
+// from the API server, which NestedFloat64 rejects, so read the raw value and coerce.
 func (h *chaosHarness) score(name string) float64 {
 	cr := h.getExperiment(name)
 	if cr == nil {
 		return -1
 	}
-	v, found, _ := unstructured.NestedFloat64(cr.Object, "status", "resilienceScore")
-	if !found {
+	raw, found, _ := unstructured.NestedFieldNoCopy(cr.Object, "status", "resilienceScore")
+	if !found || raw == nil {
 		return -1
 	}
-	return v
+	switch v := raw.(type) {
+	case float64:
+		return v
+	case int64:
+		return float64(v)
+	default:
+		return -1
+	}
+}
+
+func (h *chaosHarness) hasScore(name string) bool {
+	raw, found, _ := unstructured.NestedFieldNoCopy(h.getExperiment(name).Object, "status", "resilienceScore")
+	return found && raw != nil
 }
 
 func (h *chaosHarness) pods(app string) []corev1.Pod {
