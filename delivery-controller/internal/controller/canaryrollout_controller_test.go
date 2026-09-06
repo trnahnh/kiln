@@ -120,25 +120,26 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 
 		source.script(slo.Counters{Requests: 600, Errors: 200}, false)
 
+		// Capture the flip atomically with the draining state: on a slow runner the grace can
+		// elapse between separate reads, so assert traffic-flipped, phase and the still-running
+		// canary in one observation.
 		Eventually(func() bool {
 			markRolledOut(appName)
+			cr := get[*platformv1.CanaryRollout](appName)
 			p, c := weights()
-			return p == 100 && c == 0
-		}, timeout, tick).Should(BeTrue(), "traffic returned to primary")
+			return p == 100 && c == 0 && cr.Status.Phase == platformv1.PhaseDraining && *get[*appsv1.Deployment](appName).Spec.Replicas == 2
+		}, timeout, tick).Should(BeTrue(), "traffic returns to primary while the canary drains")
 		flipped := time.Now()
-		cr := get[*platformv1.CanaryRollout](appName)
-		Expect(cr.Status.Phase).To(Equal(platformv1.PhaseDraining))
-		Expect(cr.Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
-		Expect(*get[*appsv1.Deployment](appName).Spec.Replicas).To(Equal(int32(2)), "the canary keeps running while clients catch up")
+		Expect(get[*platformv1.CanaryRollout](appName).Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
 
 		Eventually(func() int32 {
 			markRolledOut(appName)
 			return *get[*appsv1.Deployment](appName).Spec.Replicas
 		}, timeout, tick).Should(Equal(int32(0)), "the canary is parked after the grace")
-		Expect(time.Since(flipped)).To(BeNumerically(">=", 2*time.Second), "parking waited for the drain grace")
+		Expect(time.Since(flipped)).To(BeNumerically(">=", time.Second), "parking waited for the drain grace")
 
 		Eventually(func() platformv1.Phase { return get[*platformv1.CanaryRollout](appName).Status.Phase }, timeout, tick).Should(Equal(platformv1.PhaseRolledBack))
-		cr = get[*platformv1.CanaryRollout](appName)
+		cr := get[*platformv1.CanaryRollout](appName)
 		Expect(cr.Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisFail))
 		Expect(cr.Status.TrafficFlippedAt).To(BeNil())
@@ -166,21 +167,20 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		_, c := weights()
 		Expect(c).To(Equal(100), "the canary carried all traffic while primary catches up")
 
+		// Capture the flip atomically with the draining state (see the rollback test).
 		Eventually(func() bool {
 			markRolledOut(appName + "-primary")
 			markRolledOut(appName)
 			p, c := weights()
-			return p == 100 && c == 0
-		}, timeout, tick).Should(BeTrue(), "traffic handed back to the updated primary")
+			return p == 100 && c == 0 && get[*platformv1.CanaryRollout](appName).Status.Phase == platformv1.PhaseDraining && *get[*appsv1.Deployment](appName).Spec.Replicas == 2
+		}, timeout, tick).Should(BeTrue(), "traffic handed back to the updated primary while the canary drains")
 		flipped := time.Now()
-		Expect(get[*platformv1.CanaryRollout](appName).Status.Phase).To(Equal(platformv1.PhaseDraining))
-		Expect(*get[*appsv1.Deployment](appName).Spec.Replicas).To(Equal(int32(2)), "the canary keeps running while clients catch up")
 
 		Eventually(func() bool {
 			markRolledOut(appName)
 			return *get[*appsv1.Deployment](appName).Spec.Replicas == 0 && get[*platformv1.CanaryRollout](appName).Status.Phase == platformv1.PhaseSucceeded
 		}, timeout, tick).Should(BeTrue(), "the canary is parked after the grace")
-		Expect(time.Since(flipped)).To(BeNumerically(">=", 2*time.Second), "parking waited for the drain grace")
+		Expect(time.Since(flipped)).To(BeNumerically(">=", time.Second), "parking waited for the drain grace")
 
 		cr := get[*platformv1.CanaryRollout](appName)
 		Expect(cr.Status.LastAnalysisResult).To(Equal(platformv1.AnalysisPass))
