@@ -19,6 +19,9 @@ spec:
       path: delivery-controller/config/crd/bases
     - repoURL: https://github.com/trnahnh/kiln.git
       targetRevision: main
+      path: chaos/config/crd/bases
+    - repoURL: https://github.com/trnahnh/kiln.git
+      targetRevision: main
       path: gitops/compositions
     - repoURL: https://github.com/trnahnh/kiln.git
       targetRevision: main
