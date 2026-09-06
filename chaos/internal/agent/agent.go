@@ -17,7 +17,7 @@ import (
 	"github.com/trnahnh/kiln/chaos/internal/fault"
 )
 
-// +kubebuilder:rbac:groups=platform.internal,resources=chaosexperiments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=platform.internal,resources=chaosexperiments,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
@@ -151,6 +151,9 @@ func (r *Reconciler) enforce(ctx context.Context, cr *platformv1.ChaosExperiment
 		e, err := r.Injector.Apply(ctx, req)
 		if err != nil {
 			r.event(cr, corev1.EventTypeWarning, platformv1.ReasonInjectionFailed, fmt.Sprintf("pod %s: %v", pod, err))
+			// Tell the controller the fault did not take effect so it aborts rather than
+			// scoring a run that never happened; this is on metadata, not status.
+			r.reportInjectionError(ctx, cr, fmt.Sprintf("pod %s: %v", pod, err))
 			return ctrl.Result{}, err
 		}
 		if err := r.Ledger.Put(e); err != nil {
@@ -215,6 +218,18 @@ func (r *Reconciler) revertExperiment(ctx context.Context, namespace, name strin
 		}
 	}
 	return nil
+}
+
+func (r *Reconciler) reportInjectionError(ctx context.Context, cr *platformv1.ChaosExperiment, msg string) {
+	if cr.Annotations[platformv1.AnnotationInjectionError] == msg {
+		return
+	}
+	patched := cr.DeepCopy()
+	if patched.Annotations == nil {
+		patched.Annotations = map[string]string{}
+	}
+	patched.Annotations[platformv1.AnnotationInjectionError] = msg
+	_ = r.Patch(ctx, patched, client.MergeFrom(cr))
 }
 
 func (r *Reconciler) event(cr *platformv1.ChaosExperiment, kind, reason, msg string) {

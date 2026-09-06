@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,6 +92,16 @@ type fakeInjector struct {
 	mu       sync.Mutex
 	applied  map[string]agent.Request
 	reverted map[string]bool
+	failNS   map[string]bool
+}
+
+func (f *fakeInjector) failIn(ns string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failNS == nil {
+		f.failNS = map[string]bool{}
+	}
+	f.failNS[ns] = true
 }
 
 func key(ns, pod string) string { return ns + "/" + pod }
@@ -98,6 +109,9 @@ func key(ns, pod string) string { return ns + "/" + pod }
 func (f *fakeInjector) Apply(_ context.Context, r agent.Request) (fault.Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failNS[r.Namespace] {
+		return fault.Entry{}, fmt.Errorf("synthetic injection failure")
+	}
 	if f.applied == nil {
 		f.applied = map[string]agent.Request{}
 	}

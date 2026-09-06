@@ -91,6 +91,21 @@ var _ = Describe("ChaosExperiment", func() {
 		Eventually(func() []string { return injector.appliedPods(ns) }, timeout, tick).Should(BeEmpty())
 	})
 
+	It("aborts rather than scoring a run whose fault could not be injected", func() {
+		ns := freshNamespace()
+		source.script(ns, slo.Counters{Requests: 100}, false)
+		injector.failIn(ns)
+		makePod(ns, "target-a", "target", false)
+		makePod(ns, "target-b", "target", false)
+		Expect(k8sClient.Create(ctx, experiment(ns, "cantinject", "latency-injection", 100, 0.05))).To(Succeed())
+
+		Eventually(func() string { return getCR(ns, "cantinject").Status.AbortReason }, timeout, tick).Should(Equal(platformv1.ReasonInjectionFailed), "a failed injection must not score as a clean pass")
+		cr := getCR(ns, "cantinject")
+		Expect(cr.Status.Phase).To(Equal(platformv1.PhaseAborted))
+		Expect(*cr.Status.ResilienceScore).To(Equal(0.0))
+		Expect(injector.appliedPods(ns)).To(BeEmpty())
+	})
+
 	It("aborts when metrics are unavailable rather than injecting blind", func() {
 		ns := freshNamespace()
 		source.script(ns, slo.Counters{Requests: 100}, true) // Prometheus down from the start

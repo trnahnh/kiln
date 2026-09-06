@@ -177,6 +177,13 @@ func (r *Reconciler) run(ctx context.Context, cr *platformv1.ChaosExperiment, ma
 	interval := cr.Spec.AnalysisInterval()
 	now := r.now()
 
+	// An agent could not apply the fault; the run tested nothing, so abort rather than score
+	// it as a clean pass.
+	if msg := cr.Annotations[platformv1.AnnotationInjectionError]; msg != "" {
+		r.event(cr, corev1.EventTypeWarning, platformv1.ReasonInjectionFailed, msg)
+		return r.stop(ctx, cr, platformv1.PhaseAborted, platformv1.ReasonInjectionFailed, now)
+	}
+
 	allowed := agent.Allowed(cr.Spec.Target.MaxReplicaPercentage, len(matching))
 	targets, _, _, ok := selectTargets(cr, matching, allowed)
 	if ok {

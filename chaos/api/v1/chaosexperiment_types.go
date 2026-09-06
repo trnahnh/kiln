@@ -54,6 +54,12 @@ const (
 	ReasonFaultsCleared      = "FaultsCleared"
 
 	Finalizer = "platform.internal/chaos-revert"
+
+	// An agent sets this annotation when it cannot apply a fault it was asked to; the
+	// controller aborts rather than scoring a run whose fault never took effect. It is on
+	// metadata, not status, so the agent writing it never races the controller's status
+	// patch.
+	AnnotationInjectionError = "platform.internal/chaos-injection-error"
 )
 
 type TargetSpec struct {
