@@ -1,0 +1,30 @@
+# The audit Postgres and the audit service. The image is built locally and loaded into kind
+# (`make docker-build kind-load` in audit-service/); the Secrets `audit-postgres` and
+# `audit-jwt` are created out of Git by hack/audit-secrets.sh before the root app is
+# applied (DATA_MODEL.md, "Write boundary") and, not being in this source, are never pruned.
+# Wave 2: Kafka arrives in wave 0 and the platform CRDs in wave 1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiln-audit
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/trnahnh/kiln.git
+    targetRevision: main
+    path: gitops/audit
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

@@ -1,0 +1,6 @@
+# Also created ahead of time by hack/audit-secrets.sh, which puts the Secrets here before
+# ArgoCD syncs; the apply below adopts the existing namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kiln-audit

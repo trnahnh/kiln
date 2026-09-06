@@ -22,3 +22,6 @@ audit-service/.kotlin/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Audit JWT key pair, created by hack/audit-secrets.sh
+hack/keys/

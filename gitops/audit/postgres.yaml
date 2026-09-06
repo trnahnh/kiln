@@ -1,0 +1,133 @@
+# The audit table's only home. Two roles: audit_writer owns the database and is the only
+# one with INSERT, audit_reader can only SELECT (DATA_MODEL.md, "Write boundary"). Their
+# passwords come from the Secret `audit-postgres`, created out of Git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-postgres-init
+  namespace: kiln-audit
+data:
+  10-roles.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+      CREATE ROLE audit_writer LOGIN PASSWORD '${WRITER_PASSWORD}';
+      CREATE ROLE audit_reader LOGIN PASSWORD '${READER_PASSWORD}';
+      ALTER DATABASE audit OWNER TO audit_writer;
+      GRANT ALL ON SCHEMA public TO audit_writer;
+      GRANT CONNECT ON DATABASE audit TO audit_reader;
+      GRANT USAGE ON SCHEMA public TO audit_reader;
+    EOSQL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-postgres
+  namespace: kiln-audit
+spec:
+  selector:
+    app.kubernetes.io/name: audit-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: audit-postgres
+  namespace: kiln-audit
+  labels:
+    app.kubernetes.io/name: audit-postgres
+spec:
+  serviceName: audit-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: audit-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: audit-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_DB
+              value: audit
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: audit-postgres
+                  key: postgres-password
+            - name: WRITER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: audit-postgres
+                  key: writer-password
+            - name: READER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: audit-postgres
+                  key: reader-password
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, audit]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, audit]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: audit-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# Not enforced by kind's default CNI (kindnet); committed so a real cluster gets the
+# boundary at the network layer too. The proof of the boundary is the credential, not this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: audit-postgres-writer-only
+  namespace: kiln-audit
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: audit-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kiln-audit-service
+      ports:
+        - port: 5432
