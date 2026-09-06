@@ -1,0 +1,27 @@
+# The image is built locally and loaded into kind (`make docker-build kind-load` in
+# operator/); Git owns everything else. Wave 2: the CRD arrives with kiln-platform in wave 1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiln-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/trnahnh/kiln.git
+    targetRevision: main
+    path: operator/config/deploy
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

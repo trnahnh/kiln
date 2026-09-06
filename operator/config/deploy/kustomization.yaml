@@ -1,0 +1,23 @@
+# What ArgoCD delivers for the operator (gitops/argocd/apps/kiln-operator.yaml): RBAC and
+# the manager only; the CRD arrives with kiln-platform (ADR-0012). config/default remains
+# the kubebuilder path for `make deploy`.
+namespace: kiln-operator-system
+namePrefix: kiln-operator-
+resources:
+- ../rbac
+- ../manager
+images:
+- name: controller
+  newName: kiln-operator
+  newTag: dev
+patches:
+- target:
+    kind: Deployment
+    name: controller-manager
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: IfNotPresent
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --audit-brokers=kafka.kiln-kafka.svc:9092
