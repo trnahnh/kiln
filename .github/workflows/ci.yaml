@@ -168,13 +168,21 @@ jobs:
           make -C chaos kind-load
           make -C audit-service kind-load
           kubectl apply -f gitops/observability/
-          kubectl -n monitoring rollout status deploy/prometheus --timeout=300s
+          kubectl -n monitoring rollout status deploy/prometheus deploy/jaeger --timeout=300s
           kubectl apply -k gitops/argocd/install --server-side
           kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
           bash hack/audit-secrets.sh
           kubectl apply -f gitops/argocd/root.yaml
-      - run: go test -tags=e2e ./... -v -count=1 -timeout 60m
+      - run: go test -tags=e2e ./... -v -count=1 -timeout 100m
         working-directory: e2e
         env:
           KILN_AUDIT_JWT_PRIVATE_KEY: ${{ github.workspace }}/hack/keys/audit-jwt-private.pem
+          KILN_SIM_REPORT: ${{ github.workspace }}/validation-results.md
+      - name: the Phase 7 comparison table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results
+          path: validation-results.md
+          if-no-files-found: ignore

@@ -25,3 +25,6 @@ Thumbs.db
 
 # Audit JWT key pair, created by hack/audit-secrets.sh
 hack/keys/
+
+# Phase 7 simulation output, uploaded as a CI artifact
+validation-results.md
