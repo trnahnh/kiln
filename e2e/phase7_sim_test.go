@@ -930,36 +930,88 @@ func (s *simulation) policyRow(rows []auditRow) *reportRow {
 }
 
 // auditQueryRow is the Audit/RBAC target: an actor query over the week's rows, timed by
-// the client and cross-checked against the row count read with psql.
+// the client and cross-checked, entry by entry, against psql run with the same predicate
+// at the same moment. An earlier version compared against a snapshot of the run's rows
+// taken minutes before and restricted to the run's namespaces, and read one entry more
+// or less than the endpoint on two CI runs; the difference is now named in the log.
 func (s *simulation) auditQueryRow(rows []auditRow) *reportRow {
 	r := &reportRow{name: "Audit query (actor, time range)", baseline: baselineAudit}
 	// The window is the week itself; the rollouts every identity submitted during setup
-	// fall before it, and the psql count must apply the same bound.
-	fromT := s.start.UTC().Add(-time.Minute)
-	from := fromT.Format(time.RFC3339)
+	// fall before it.
+	from := s.start.UTC().Add(-time.Minute).Format(time.RFC3339)
 	to := time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
 	for _, id := range s.identities {
 		r.n++
-		expected := 0
-		for _, row := range rows {
-			if row.actor == id.subject && !rowTime(s.g, row.occurredAt).Before(fromT) {
-				expected++
-			}
-		}
 		q := fmt.Sprintf("/v1/audit?actor=%s&from=%s&to=%s&limit=1000", url.QueryEscape(id.subject), url.QueryEscape(from), url.QueryEscape(to))
+		expected := s.psqlEventIDs(id.subject, from, to)
 		began := time.Now()
 		code, body := s.call("GET", q, s.token("auditor@kiln.sim", "audit:read"), nil)
 		latency := time.Since(began)
-		entries, _ := body["entries"].([]any)
-		if code != 200 || len(entries) != expected {
+		got := entryIDs(body)
+		if code != 200 || !sameSet(got, expected) {
 			r.errors++
-			s.t.Logf("%s audit query: %d, %d entries, expected %d from psql", id.name, code, len(entries), expected)
+			s.t.Logf("%s audit query: %d, %d entries, psql has %d; only in the endpoint %v; only in psql %v",
+				id.name, code, len(got), len(expected), s.describeRows(rows, minus(got, expected)), s.describeRows(rows, minus(expected, got)))
 			continue
 		}
 		r.samples = append(r.samples, sample{latency: latency})
 	}
-	r.note = "client round trip of GET /v1/audit per identity; the entry count must equal the rows psql returns for that actor"
+	r.note = "client round trip of GET /v1/audit per identity; the entries must be exactly the rows psql returns for the same actor and window"
 	return r
+}
+
+func (s *simulation) psqlEventIDs(actor, from, to string) []string {
+	out := s.psql(fmt.Sprintf(`SELECT event_id FROM audit_entry WHERE actor = '%s' AND occurred_at >= '%s' AND occurred_at <= '%s' ORDER BY seq`, actor, from, to))
+	return strings.Fields(out)
+}
+
+func entryIDs(body map[string]any) []string {
+	entries, _ := body["entries"].([]any)
+	var ids []string
+	for _, e := range entries {
+		if m, ok := e.(map[string]any); ok {
+			if id, ok := m["eventId"].(string); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+func sameSet(a, b []string) bool {
+	return len(a) == len(b) && len(minus(a, b)) == 0 && len(minus(b, a)) == 0
+}
+
+func minus(a, b []string) []string {
+	in := map[string]bool{}
+	for _, x := range b {
+		in[x] = true
+	}
+	var out []string
+	for _, x := range a {
+		if !in[x] {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// describeRows names event ids by their row where the run's rows hold them, so a
+// difference reads as an action rather than a uuid.
+func (s *simulation) describeRows(rows []auditRow, ids []string) []string {
+	byID := map[string]auditRow{}
+	for _, r := range s.readRows() {
+		byID[r.eventID] = r
+	}
+	var out []string
+	for _, id := range ids {
+		if r, ok := byID[id]; ok {
+			out = append(out, fmt.Sprintf("%s %s %s @%s", r.action, r.resource, strings.TrimSpace(r.details), r.occurredAt))
+		} else {
+			out = append(out, id+" (not in the table)")
+		}
+	}
+	return out
 }
 
 // crossCheck requires the audit row's time and the cluster's own observation of the same
