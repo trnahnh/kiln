@@ -1,9 +1,9 @@
 # kiln landing page
 
-The site for [kiln](../README.md): a 3-D hero (a scattered field of faceted shards that
-crystallizes into a six-node lattice, one node per subsystem), the six subsystems with the
-numbers from the validation week, the structural invariants with their decision records, and
-the validation table verbatim. Next.js App Router, React, Tailwind, TypeScript, no other
+The site for [kiln](../README.md), set as a cyanotype technical drawing: sheet 1 is a general
+arrangement of the request flow that drafts itself in front of you (six wireframe blocks on a
+drafted plane, dimensioned with the validation week's real numbers, checked against the CI run),
+and every section below is a numbered sheet with its own title block. Next.js App Router, React, Tailwind, TypeScript, no other
 runtime dependencies. Deployed from this folder (Vercel root directory `web/`), production
 from `origin/main`.
 
@@ -17,7 +17,7 @@ pnpm build && pnpm start
 
 ## What is on the page
 
-The hero, then a readout band (one number per subsystem), a specimen viewer per subsystem (stack, the
+Sheet 1 is the drawing. Sheets 2 to 6: a specimen viewer per subsystem (stack, the
 problems it solves, the real CRD or contract it owns from `docs/API_REFERENCE.md`, its decision
 record, its validation number), three working demos of the platform's own rules (the audit hash
 chain with SHA-256 computed in the browser by the rule in `docs/DATA_MODEL.md`, the CostAware
@@ -36,7 +36,25 @@ pnpm check:metrics  # exit 1 if the committed JSON would change
 CI runs the check on every push to `main`, so a doc edit that moves a number fails the build
 until `content/metrics.json` is regenerated and committed.
 
-## The hero asset
+## The drawing
+
+```
+pnpm build:draft    # writes public/draft/model.json, drawing.svg and card.svg
+```
+
+`scripts/build-draft.ts` builds the model (six blocks, two layouts, the measured values stamped
+from `content/metrics.json`) and renders the finished sheet as the fallback SVG and the social
+card. `lib/draft/` holds the line model (`model.ts`), the orthographic projection with hidden-line
+detection and the contain-fit (`project.ts`), every primitive with its draw-in window
+(`layout.ts`), the beats (`timeline.ts`) and the static renderer (`svg.ts`). The client
+(`components/DraftScene.tsx`) projects the model each frame into inline SVG, so the drawing
+draws itself in with stroke animation, orbits under the pointer, and stays crisp at any DPR
+without WebGL. Text is sized from the fit scale so the small rest and phone drawings stay legible.
+
+## The earlier hero
+
+The amethyst crystal lattice (`components/HeroScene.tsx`, `lib/hero/`, `public/hero/`) is kept in
+the repo unmounted.
 
 ```
 pnpm build:lattice  # writes public/hero/lattice.json and public/hero/lattice.svg
@@ -65,9 +83,7 @@ Every bail-out logs `[hero] skipped: <reason>` and leaves the session flag alone
 |---|---|
 | `already seen this session` | the flag is set and this is not a hard reload |
 | `prefers-reduced-motion is set` | the OS preference; the page arrives with the static SVG |
-| `no WebGL context` | WebGL unavailable or disabled |
-| `shader failed to link: ...` | the program did not compile or link |
-| `asset not loaded within 2.5 s` | `lattice.json` did not arrive in time |
+| `asset not loaded within 2.5 s` | `model.json` did not arrive in time |
 
 Any input skips: pointer, key, wheel, touch. A skip is a time-warp, not a cut: whatever
 remains of the timeline finishes in about 450 ms, then the normal hand-off runs. The
@@ -90,8 +106,9 @@ node scripts/gating.mjs --url http://localhost:3100
 
 `film.mjs` writes numbered frames plus `console.txt` (every console line and the final gating
 state). `gating.mjs` runs the matrix: first open, normal reload, hard reload, route change and
-back, a new tab, reduced motion, and a `--disable-3d-apis` run, checking the flag, the stage
-phase and the logged reason for each, and exits non-zero on any failure.
+back, a new tab, reduced motion, and a `--disable-3d-apis` run (which must still play, since the
+drawing is SVG), checking the flag, the stage phase and the logged reason for each, and exits
+non-zero on any failure.
 
 The social card is the `/og` route captured at 1200x630:
 
