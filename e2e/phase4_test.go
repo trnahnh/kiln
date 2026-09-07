@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,10 @@ type canaryHarness struct {
 	ns    string
 	seen  []int
 	start map[string]time.Time
+	// createRollout replaces the direct create; Phase 7 submits through the REST path.
+	createRollout func(*unstructured.Unstructured)
+	// qps of the meshed load generator; zero means the Phase 4 default of 100.
+	qps int
 }
 
 func TestPhase4ProgressiveDelivery(t *testing.T) {
@@ -144,8 +149,12 @@ func (h *canaryHarness) deployTarget() {
 	})).To(Succeed())
 	h.g.Expect(h.c.Create(h.ctx, fortioDeployment(h.ns, targetApp, 2, "server"))).To(Succeed())
 	// A meshed client: VirtualService weights are applied by the caller's sidecar.
+	qps := h.qps
+	if qps == 0 {
+		qps = 100
+	}
 	h.g.Expect(h.c.Create(h.ctx, fortioDeployment(h.ns, loadgenApp, 1,
-		"load", "-qps", "100", "-c", "8", "-t", "0", "-allow-initial-errors", "http://"+targetApp+":8080/"))).To(Succeed())
+		"load", "-qps", strconv.Itoa(qps), "-c", "8", "-t", "0", "-allow-initial-errors", "http://"+targetApp+":8080/"))).To(Succeed())
 
 	rollout := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "platform.internal/v1",
@@ -159,6 +168,10 @@ func (h *canaryHarness) deployTarget() {
 			"analysis":         map[string]any{"interval": "15s", "maxStepDuration": "10m"},
 		},
 	}}
+	if h.createRollout != nil {
+		h.createRollout(rollout)
+		return
+	}
 	h.g.Expect(h.c.Create(h.ctx, rollout)).To(Succeed())
 }
 
@@ -363,7 +376,7 @@ func (s *spanningLoad) assertNoMeshFailures(flipped time.Time, max500Rate float6
 		}
 	}
 	s.h.g.Expect(total).To(BeNumerically(">", 0))
-	s.h.g.Expect(float64(app500)/float64(total)).To(BeNumerically("<=", max500Rate))
+	s.h.g.Expect(float64(app500) / float64(total)).To(BeNumerically("<=", max500Rate))
 }
 
 // healthyTraffic proves the mesh serves the host from the caller's side: repeated bounded

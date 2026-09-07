@@ -50,6 +50,8 @@ type chaosHarness struct {
 	c   client.Client
 	cs  *kubernetes.Clientset
 	ns  string
+	// createExperiment replaces the direct create; Phase 7 submits through the REST path.
+	createExperiment func(*unstructured.Unstructured)
 }
 
 func TestPhase5Chaos(t *testing.T) {
@@ -400,6 +402,10 @@ func (h *chaosHarness) applyExperiment(spec map[string]any, name string) {
 		"spec":       spec,
 	}}
 	cr.SetGroupVersionKind(gvkChaos)
+	if h.createExperiment != nil {
+		h.createExperiment(cr)
+		return
+	}
 	h.g.Expect(h.c.Create(h.ctx, cr)).To(Succeed())
 }
 

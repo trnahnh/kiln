@@ -93,9 +93,10 @@ type auditRow struct {
 }
 
 type topicRecord struct {
-	key   string
-	value string
-	event map[string]any
+	key     string
+	value   string
+	event   map[string]any
+	headers map[string]string
 }
 
 func TestPhase6Audit(t *testing.T) {
