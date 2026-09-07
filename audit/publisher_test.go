@@ -11,6 +11,11 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/trnahnh/kiln/tracing"
 )
 
 func sample(id string) Event {
@@ -84,7 +89,12 @@ func TestKafkaDeliversToTheTopicKeyedByResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := sample(DeterministicID("deliver"))
-	pub.Publish(e)
+	otel.SetTracerProvider(sdktrace.NewTracerProvider())
+	defer otel.SetTracerProvider(noop.NewTracerProvider())
+	spanCtx, span := otel.Tracer("test").Start(context.Background(), "PROVISION")
+	pub.Publish(spanCtx, e)
+	span.End()
+	traceID := tracing.TraceID(spanCtx)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := pub.Close(ctx); err != nil {
@@ -114,6 +124,26 @@ func TestKafkaDeliversToTheTopicKeyedByResource(t *testing.T) {
 	if got.EventID != e.EventID || got.Details["outcome"] != "Ready" {
 		t.Errorf("round trip lost content: %+v", got)
 	}
+	headers := map[string]string{}
+	for _, h := range recs[0].Headers {
+		headers[h.Key] = string(h.Value)
+	}
+	if got := tracing.TraceID(tracing.FromHeaders(context.Background(), headers)); got != traceID {
+		t.Errorf("the record must carry the publishing span as W3C headers (ADR-0021): headers %v, want trace %s", headers, traceID)
+	}
+}
+
+func TestRecorderKeepsTheTrace(t *testing.T) {
+	otel.SetTracerProvider(sdktrace.NewTracerProvider())
+	defer otel.SetTracerProvider(noop.NewTracerProvider())
+	ctx, span := otel.Tracer("test").Start(context.Background(), "SCALE")
+	defer span.End()
+	rec := &Recorder{}
+	rec.Publish(ctx, sample(DeterministicID("traced")))
+	rec.Publish(context.Background(), sample(DeterministicID("untraced")))
+	if got := rec.TraceIDs(); len(got) != 2 || got[0] != tracing.TraceID(ctx) || got[1] != "" {
+		t.Fatalf("got %v", got)
+	}
 }
 
 func TestKafkaNeverBlocksAndReportsDrops(t *testing.T) {
@@ -137,7 +167,7 @@ func TestKafkaNeverBlocksAndReportsDrops(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < 50; i++ {
-			pub.Publish(sample(DeterministicID("drop", string(rune('a'+i)))))
+			pub.Publish(context.Background(), sample(DeterministicID("drop", string(rune('a'+i)))))
 		}
 	}()
 	select {
@@ -145,7 +175,7 @@ func TestKafkaNeverBlocksAndReportsDrops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Publish blocked with an unreachable broker (ADR-0017)")
 	}
-	pub.Publish(Event{EventID: "not-a-uuid"})
+	pub.Publish(context.Background(), Event{EventID: "not-a-uuid"})
 	mu.Lock()
 	defer mu.Unlock()
 	var full, invalid bool

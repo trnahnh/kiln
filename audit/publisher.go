@@ -5,40 +5,55 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/trnahnh/kiln/tracing"
 )
 
 // Publisher accepts an event and returns at once; delivery is the implementation's
-// business (ADR-0017).
+// business (ADR-0017). ctx carries the span the event belongs to, which travels with the
+// record as W3C headers (ADR-0021).
 type Publisher interface {
-	Publish(Event)
+	Publish(context.Context, Event)
 }
 
 // Discard is the publisher of a controller with no brokers configured.
 type Discard struct{}
 
-func (Discard) Publish(Event) {}
+func (Discard) Publish(context.Context, Event) {}
 
-// Recorder keeps every event in memory; tests read them back.
+// Recorder keeps every event in memory with the trace it was published under; tests read
+// them back.
 type Recorder struct {
 	mu     sync.Mutex
 	events []Event
+	traces []string
 }
 
-func (r *Recorder) Publish(e Event) {
+func (r *Recorder) Publish(ctx context.Context, e Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, e)
+	r.traces = append(r.traces, tracing.TraceID(ctx))
 }
 
 func (r *Recorder) Events() []Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]Event(nil), r.events...)
+}
+
+// TraceIDs are the traces the recorded events were published under, in order; an empty
+// string marks an event published outside any span.
+func (r *Recorder) TraceIDs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.traces...)
 }
 
 // Options configure a Kafka publisher. Brokers is the only required field.
@@ -58,12 +73,19 @@ type Options struct {
 type Kafka struct {
 	client    *kgo.Client
 	topic     string
-	queue     chan Event
+	queue     chan queued
 	onFailure func(Event, error)
 	published *prometheus.CounterVec
 	failures  *prometheus.CounterVec
 	wg        sync.WaitGroup
 	closeOnce sync.Once
+}
+
+// queued is an event with the propagation headers captured when it was published, so the
+// drain goroutine needs no context of its own.
+type queued struct {
+	event   Event
+	headers map[string]string
 }
 
 var ErrBufferFull = errors.New("audit publish buffer is full")
@@ -95,7 +117,7 @@ func NewKafka(o Options) (*Kafka, error) {
 	k := &Kafka{
 		client:    client,
 		topic:     o.Topic,
-		queue:     make(chan Event, o.Buffer),
+		queue:     make(chan queued, o.Buffer),
 		onFailure: o.OnFailure,
 		published: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kiln_audit_events_published_total", Help: "Audit events acknowledged by Kafka."}, []string{"action"}),
 		failures:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kiln_audit_publish_failures_total", Help: "Audit events dropped or given up (ADR-0017)."}, []string{"action"}),
@@ -116,13 +138,13 @@ func NewKafka(o Options) (*Kafka, error) {
 }
 
 // Publish never blocks: a full buffer drops the event and reports it.
-func (k *Kafka) Publish(e Event) {
+func (k *Kafka) Publish(ctx context.Context, e Event) {
 	if err := e.Validate(); err != nil {
 		k.fail(e, err)
 		return
 	}
 	select {
-	case k.queue <- e:
+	case k.queue <- queued{event: e, headers: tracing.Headers(ctx)}:
 	default:
 		k.fail(e, ErrBufferFull)
 	}
@@ -130,13 +152,14 @@ func (k *Kafka) Publish(e Event) {
 
 func (k *Kafka) drain() {
 	defer k.wg.Done()
-	for e := range k.queue {
+	for q := range k.queue {
+		e := q.event
 		value, err := json.Marshal(e)
 		if err != nil {
 			k.fail(e, err)
 			continue
 		}
-		rec := &kgo.Record{Topic: k.topic, Key: []byte(e.Resource), Value: value}
+		rec := &kgo.Record{Topic: k.topic, Key: []byte(e.Resource), Value: value, Headers: recordHeaders(q.headers)}
 		k.client.Produce(context.Background(), rec, func(_ *kgo.Record, err error) {
 			if err != nil {
 				k.fail(e, err)
@@ -145,6 +168,19 @@ func (k *Kafka) drain() {
 			k.published.WithLabelValues(e.Action).Inc()
 		})
 	}
+}
+
+func recordHeaders(headers map[string]string) []kgo.RecordHeader {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]kgo.RecordHeader, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, kgo.RecordHeader{Key: key, Value: []byte(headers[key])})
+	}
+	return out
 }
 
 func (k *Kafka) fail(e Event, err error) {
