@@ -1,0 +1,232 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --ink: #0a0a0f;
+  --text: #edeaf2;
+  --text-muted: rgba(237, 234, 242, 0.56);
+  --text-faint: rgba(237, 234, 242, 0.34);
+  --accent: #8b5cf6;
+  --hairline: rgba(139, 92, 246, 0.18);
+  --hairline-strong: rgba(139, 92, 246, 0.42);
+  --scene-ink: #0a0a0f;
+  --scene-light: #f6f1ff;
+  --facet-shadow: #1a0f2b;
+  --facet-deep: #3b1f5c;
+  --facet-accent: #8b5cf6;
+  --facet-highlight: #c4b5fd;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-fg: var(--text);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-facet-deep: var(--facet-deep);
+  --color-facet-highlight: var(--facet-highlight);
+  --font-sans: var(--font-plex), "IBM Plex Sans", system-ui, sans-serif;
+}
+
+html {
+  background: var(--ink);
+}
+
+body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--facet-deep);
+  color: var(--text);
+}
+
+.measure {
+  max-width: 62ch;
+}
+
+.arrive {
+  opacity: 0;
+  animation: arrive 600ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: var(--arrive-delay, 0ms);
+}
+
+/* The inline gate script in app/layout.tsx adds intro-pending before first paint; Hero.tsx
+   removes it as the hand-off begins, so the arrivals play once, after the scene. */
+html.intro-pending .arrive {
+  animation-play-state: paused;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hero-stage {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100lvh;
+  z-index: 1000;
+  pointer-events: none;
+  contain: layout;
+}
+
+.hero-stage[data-phase="intro"] {
+  pointer-events: auto;
+}
+
+.hero-stage[data-phase="rest"],
+.hero-stage[data-phase="static"] {
+  position: absolute;
+  z-index: 0;
+}
+
+.hero-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 120%;
+  background: var(--scene-ink);
+}
+
+.hero-stage canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hero-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 0.8125rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  transition: color 200ms ease;
+}
+
+.hero-label[data-glow="1"] {
+  color: var(--facet-highlight);
+}
+
+.hero-hint {
+  position: fixed;
+  left: 50%;
+  top: calc(100svh - 2.75rem);
+  transform: translateX(-50%);
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+@media (max-height: 519px), (max-width: 639px) {
+  .hero-hint {
+    display: none;
+  }
+}
+
+.hero-slot {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 70svh;
+}
+
+.hero-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.flow-rail {
+  position: relative;
+}
+
+.flow-rail::before {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  top: 1.25rem;
+  bottom: 1.25rem;
+  width: 1px;
+  background: var(--hairline-strong);
+}
+
+.facet-glyph {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  flex: none;
+}
+
+table.validation {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+table.validation th,
+table.validation td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.75rem 1rem 0.75rem 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+table.validation th {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+table.validation td.num {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrive {
+    animation: none;
+    opacity: 1;
+  }
+  .hero-label {
+    transition: none;
+  }
+}
+
+.hero-slot[data-live] img {
+  visibility: hidden;
+}
+
+.hero-copy {
+  pointer-events: none;
+}
+
+.hero-copy a {
+  pointer-events: auto;
+}
