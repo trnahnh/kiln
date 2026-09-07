@@ -14,6 +14,7 @@ import (
 	"github.com/trnahnh/kiln/audit"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/pricing"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/scoring"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 func nodeInfo(name string, labels map[string]string, used ...*v1.Pod) fwk.NodeInfo {
@@ -189,6 +190,34 @@ func TestPostBindPublishesOneScheduleEventPerBinding(t *testing.T) {
 	}
 	if last.EventID == e.EventID {
 		t.Fatal("different pods must not share an eventId")
+	}
+}
+
+func TestPostBindJoinsThePodsTraceOrStartsOne(t *testing.T) {
+	rec := &audit.Recorder{}
+	p := NewWithSource(pricing.NodeLabels{}, scoring.DefaultWeights()).WithAudit(rec)
+	traced := testPod("standard", "500m", "1Gi")
+	traced.UID = "uid-traced"
+	traced.Annotations = map[string]string{tracing.AnnotationTraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
+	p.PostBind(context.Background(), framework.NewCycleState(), traced, "od-a")
+
+	untraced := testPod("standard", "500m", "1Gi")
+	untraced.UID = "uid-untraced"
+	p.PostBind(context.Background(), framework.NewCycleState(), untraced, "od-a")
+
+	traces := rec.TraceIDs()
+	if traces[0] != "0af7651916cd43dd8448eb211c80319c" {
+		t.Fatalf("a pod carrying a traceparent must be scheduled as a span of that trace, got %q", traces[0])
+	}
+	if traces[1] != "" {
+		t.Fatalf("a pod without one starts its own trace, which the no-op provider does not record: got %q", traces[1])
+	}
+}
+
+func TestNewWithTracingEndpointArg(t *testing.T) {
+	raw := &runtime.Unknown{Raw: []byte(`{"weights":{"cost":50,"fragmentation":30,"preemption":20},"tracing":{"endpoint":""}}`), ContentType: runtime.ContentTypeJSON}
+	if _, err := New(context.Background(), raw, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

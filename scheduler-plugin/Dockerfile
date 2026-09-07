@@ -2,6 +2,7 @@ FROM golang:1.26 AS builder
 ENV GOWORK=off
 WORKDIR /workspace
 COPY audit/ audit/
+COPY tracing/ tracing/
 COPY scheduler-plugin/go.mod scheduler-plugin/go.sum scheduler-plugin/
 RUN cd scheduler-plugin && go mod download
 COPY scheduler-plugin/ scheduler-plugin/

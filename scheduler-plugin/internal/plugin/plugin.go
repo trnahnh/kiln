@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/attribute"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,6 +20,7 @@ import (
 	"github.com/trnahnh/kiln/audit"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/pricing"
 	"github.com/trnahnh/kiln/scheduler-plugin/internal/scoring"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 const (
@@ -34,15 +36,21 @@ const (
 
 // Args is the pluginConfig payload; all three weights must be given and sum to 100. Audit
 // names the Kafka brokers every binding is published to; empty disables publishing.
+// Tracing names the OTLP endpoint spans go to; empty disables export.
 type Args struct {
 	metav1.TypeMeta `json:",inline"`
 	Weights         scoring.Weights `json:"weights"`
 	Audit           AuditArgs       `json:"audit"`
+	Tracing         TracingArgs     `json:"tracing"`
 }
 
 type AuditArgs struct {
 	Brokers []string `json:"brokers"`
 	Topic   string   `json:"topic"`
+}
+
+type TracingArgs struct {
+	Endpoint string `json:"endpoint"`
 }
 
 const controllerName = "kiln-scheduler"
@@ -61,7 +69,7 @@ var (
 	_ fwk.EnqueueExtensions = &CostAware{}
 )
 
-func New(_ context.Context, obj runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+func New(ctx context.Context, obj runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
 	args := Args{Weights: scoring.DefaultWeights()}
 	if obj != nil {
 		if err := frameworkruntime.DecodeInto(obj, &args); err != nil {
@@ -74,6 +82,11 @@ func New(_ context.Context, obj runtime.Object, _ fwk.Handle) (fwk.Plugin, error
 	publisher, err := newPublisher(args.Audit)
 	if err != nil {
 		return nil, fmt.Errorf("%s audit: %w", Name, err)
+	}
+	// The scheduler has no shutdown hook for plugins; the batching exporter flushes on its
+	// own schedule, which is all a long-running process needs.
+	if _, err := tracing.Setup(ctx, controllerName, args.Tracing.Endpoint); err != nil {
+		return nil, fmt.Errorf("%s tracing: %w", Name, err)
 	}
 	p := NewWithSource(pricing.NodeLabels{}, args.Weights)
 	p.audit = publisher
@@ -178,10 +191,20 @@ func (p *CostAware) Score(_ context.Context, state fwk.CycleState, pod *v1.Pod, 
 func (p *CostAware) ScoreExtensions() fwk.ScoreExtensions { return nil }
 
 // PostBind runs only for a pod this scheduler actually bound, so every SCHEDULE event is a
-// placement that happened rather than one that was scored.
-func (p *CostAware) PostBind(_ context.Context, _ fwk.CycleState, pod *v1.Pod, nodeName string) {
+// placement that happened rather than one that was scored. The span joins the trace the
+// pod was requested under when its template carries one, and starts a new one otherwise
+// (ADR-0021).
+func (p *CostAware) PostBind(ctx context.Context, _ fwk.CycleState, pod *v1.Pod, nodeName string) {
 	resource := audit.ResourceRef("Pod", pod.Namespace, pod.Name)
-	p.audit.Publish(audit.Event{
+	class := string(scoring.ParseClass(pod.Labels[LabelWorkloadClass]))
+	ctx, span := tracing.Span(ctx, controllerName, pod.Annotations, audit.ActionSchedule, pod.CreationTimestamp.Time,
+		attribute.String("kiln.resource", resource),
+		attribute.String("kiln.outcome", "Bound"),
+		attribute.String("kiln.node", nodeName),
+		attribute.String("kiln.workload_class", class),
+	)
+	defer span.End()
+	p.audit.Publish(ctx, audit.Event{
 		EventID:   audit.DeterministicID(resource, audit.ActionSchedule, string(pod.UID), nodeName),
 		Actor:     audit.ActorOf(pod.Annotations, controllerName),
 		Action:    audit.ActionSchedule,
@@ -190,7 +213,7 @@ func (p *CostAware) PostBind(_ context.Context, _ fwk.CycleState, pod *v1.Pod, n
 		Details: map[string]any{
 			"outcome":       "Bound",
 			"node":          nodeName,
-			"workloadClass": string(scoring.ParseClass(pod.Labels[LabelWorkloadClass])),
+			"workloadClass": class,
 		},
 	})
 }
