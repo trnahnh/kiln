@@ -15,6 +15,15 @@ pnpm dev            # http://localhost:3000
 pnpm build && pnpm start
 ```
 
+## What is on the page
+
+The hero, then a readout band (one number per subsystem), a specimen viewer per subsystem (stack, the
+problems it solves, the real CRD or contract it owns from `docs/API_REFERENCE.md`, its decision
+record, its validation number), three working demos of the platform's own rules (the audit hash
+chain with SHA-256 computed in the browser by the rule in `docs/DATA_MODEL.md`, the CostAware
+placement score, the chaos agent's blast-radius floor), the three injected failures drawn to scale,
+the invariants with their ADRs, and the validation table verbatim.
+
 ## Where the numbers come from
 
 `docs/METRICS.md` in the repo root is the only owner of every figure on the page.
