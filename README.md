@@ -162,4 +162,4 @@ Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`
 
 ## Status
 
-Phases 0 to 5 (foundation, operator, policy and GitOps, scheduler, progressive delivery, chaos) are complete; Phase 6 (audit/RBAC service) is in progress. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
+Phases 0 to 6 (foundation, operator, policy and GitOps, scheduler, progressive delivery, chaos, audit/RBAC) are complete; Phase 7 (integration and validation) is in progress. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
