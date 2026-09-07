@@ -35,11 +35,11 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              port: 13133
+              port: query
           livenessProbe:
             httpGet:
               path: /
-              port: 13133
+              port: query
           resources:
             requests:
               cpu: 50m
