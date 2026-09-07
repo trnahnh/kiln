@@ -162,4 +162,4 @@ Full phase-by-phase build order, with exit criteria for each: [`docs/ROADMAP.md`
 
 ## Status
 
-Phases 0 to 6 (foundation, operator, policy and GitOps, scheduler, progressive delivery, chaos, audit/RBAC) are complete; Phase 7 (integration and validation) is in progress. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
+Phases 0 to 7 have met their exit criteria; Phase 7's comparison table and the CI run that produced it are in [`docs/METRICS.md`](docs/METRICS.md#validation-results). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full phase tracker.
