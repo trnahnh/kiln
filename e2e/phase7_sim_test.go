@@ -446,7 +446,7 @@ func (s *simulation) podKill(id *simIdentity, k int) (string, time.Time, error) 
 		"target":           map[string]any{"labelSelector": "app=" + targetApp, "maxReplicaPercentage": int64(50)},
 		"faultType":        "pod-kill",
 		"duration":         "40s",
-		"abortOnSLOBreach": map[string]any{"errorRateMax": 0.95, "latencyP99MaxMs": int64(2000)},
+		"abortOnSLOBreach": map[string]any{"errorRateMax": 0.95, "latencyP99MaxMs": int64(5000)},
 		"fault":            map[string]any{"interval": "10s"},
 		"analysis":         map[string]any{"interval": "5s"},
 	}))

@@ -10,8 +10,13 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"net/http"
+	"net/url"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,11 +53,15 @@ type chaosHarness struct {
 	t   *testing.T
 	g   *WithT
 	ctx context.Context
+	cfg *rest.Config
 	c   client.Client
 	cs  *kubernetes.Clientset
 	ns  string
 	// createExperiment replaces the direct create; Phase 7 submits through the REST path.
 	createExperiment func(*unstructured.Unstructured)
+	// prometheus is the port-forwarded query base; set, every experiment waits for the
+	// target's traffic to be clean before it starts (see waitForCleanWindow).
+	prometheus string
 }
 
 func TestPhase5Chaos(t *testing.T) {
@@ -65,8 +75,9 @@ func TestPhase5Chaos(t *testing.T) {
 	cs, err := kubernetes.NewForConfig(cfg)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	h := &chaosHarness{t: t, g: g, ctx: ctx, c: c, cs: cs, ns: "chaos-e2e"}
+	h := &chaosHarness{t: t, g: g, ctx: ctx, cfg: cfg, c: c, cs: cs, ns: "chaos-e2e"}
 	h.waitForChaos()
+	h.forwardPrometheus()
 	h.createMeshNamespace()
 	t.Cleanup(h.deleteNamespace)
 	h.deployTarget()
@@ -281,14 +292,20 @@ func (h *chaosHarness) testPodKillScored(t *testing.T) {
 	g := NewWithT(t)
 	name := "podkill"
 	h.applyExperiment(map[string]any{
-		"target":           map[string]any{"labelSelector": "app=" + chaosTargetApp, "maxReplicaPercentage": int64(50)},
-		"faultType":        "pod-kill",
-		"duration":         "40s",
-		"abortOnSLOBreach": map[string]any{"errorRateMax": 0.95, "latencyP99MaxMs": int64(2000)},
+		"target":    map[string]any{"labelSelector": "app=" + chaosTargetApp, "maxReplicaPercentage": int64(50)},
+		"faultType": "pod-kill",
+		"duration":  "40s",
+		// A kill strands the requests in flight to that pod for the 2 to 3 s its connections
+		// take to fail, and a 2000 ms p99 bound judges more than 1% of a window slower than 2 s
+		// as a breach: a healthy run consumed half of that margin and CI contention took the
+		// rest. This subtest proves kills happen, a score is produced and kills stop; the
+		// breach subtests keep the tight bounds.
+		"abortOnSLOBreach": map[string]any{"errorRateMax": 0.95, "latencyP99MaxMs": int64(5000)},
 		"fault":            map[string]any{"interval": "10s"},
 		"analysis":         map[string]any{"interval": "5s"},
 	}, name)
 	defer h.deleteExperiment(name)
+	defer func() { t.Log(h.describe(name)) }()
 
 	// Pods are actually deleted: at least one UID from the initial set disappears.
 	before := h.podUIDs(chaosTargetApp)
@@ -395,6 +412,10 @@ func nodeExec(ctx context.Context, node string, args ...string) (string, error) 
 // --- CR helpers ---
 
 func (h *chaosHarness) applyExperiment(spec map[string]any, name string) {
+	if h.prometheus != "" {
+		bound, _, _ := unstructured.NestedInt64(spec, "abortOnSLOBreach", "latencyP99MaxMs")
+		h.waitForCleanWindow(name, float64(bound))
+	}
 	cr := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "platform.internal/v1",
 		"kind":       "ChaosExperiment",
@@ -407,6 +428,133 @@ func (h *chaosHarness) applyExperiment(spec map[string]any, name string) {
 		return
 	}
 	h.g.Expect(h.c.Create(h.ctx, cr)).To(Succeed())
+}
+
+func (h *chaosHarness) forwardPrometheus() {
+	pods := &corev1.PodList{}
+	h.g.Expect(h.c.List(h.ctx, pods, client.InNamespace("monitoring"), client.MatchingLabels{"app": "prometheus"})).To(Succeed())
+	h.g.Expect(pods.Items).NotTo(BeEmpty(), "no prometheus pod")
+	var stop chan struct{}
+	h.prometheus, stop = portForward(h.t, h.g, h.cfg, h.cs, "monitoring", pods.Items[0].Name, 9090)
+	h.t.Cleanup(func() { close(stop) })
+}
+
+// waitForCleanWindow holds the next experiment until the target's source-reported
+// traffic shows a scrape-to-scrape window with requests, no errors and nothing slower than
+// the bound the experiment will judge against. The controller's baseline is Prometheus'
+// latest scrape, up to 15 s old, so an experiment started seconds after the previous fault
+// on the same pods would otherwise judge that fault's tail as its own first window.
+func (h *chaosHarness) waitForCleanWindow(name string, latencyMaxMs float64) {
+	deadline := time.Now().Add(60 * time.Second)
+	prev := h.sourceCounters(latencyMaxMs)
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		cur := h.sourceCounters(latencyMaxMs)
+		if cur.requests <= prev.requests {
+			continue
+		}
+		errors, slow := cur.errors-prev.errors, cur.slow-prev.slow
+		if errors <= 0 && slow <= 0 {
+			h.t.Logf("%s: target traffic clean before start (%.0f requests, 0 errors, 0 slower than %.0f ms)", name, cur.requests-prev.requests, latencyMaxMs)
+			return
+		}
+		h.t.Logf("%s: waiting for clean traffic, last window had %.0f errors and %.0f requests slower than %.0f ms", name, errors, slow, latencyMaxMs)
+		prev = cur
+	}
+	h.g.Expect(false).To(BeTrue(), "%s: the target's traffic did not come clean within 60 s of the previous fault", name)
+}
+
+type sourceCounters struct{ requests, errors, slow float64 }
+
+// sourceCounters reads what the controller reads: the meshed callers' view of the target
+// workload, and the count above the latency bound interpolated within Istio's buckets.
+func (h *chaosHarness) sourceCounters(latencyMaxMs float64) sourceCounters {
+	sel := fmt.Sprintf(`reporter="source",destination_workload=%q,destination_workload_namespace=%q`, chaosTargetApp, h.ns)
+	requests := h.promScalar(fmt.Sprintf(`sum(istio_request_duration_milliseconds_count{%s})`, sel))
+	errors := h.promScalar(fmt.Sprintf(`sum(istio_requests_total{%s,response_code=~"5..|0"})`, sel))
+	atOrBelow := h.promAtOrBelow(fmt.Sprintf(`sum by (le) (istio_request_duration_milliseconds_bucket{%s})`, sel), latencyMaxMs)
+	return sourceCounters{requests: requests, errors: errors, slow: math.Max(0, requests-atOrBelow)}
+}
+
+func (h *chaosHarness) promQuery(expr string) []struct {
+	Metric map[string]string `json:"metric"`
+	Value  []any             `json:"value"`
+} {
+	resp, err := http.Get(h.prometheus + "/api/v1/query?query=" + url.QueryEscape(expr))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []any             `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	return out.Data.Result
+}
+
+func (h *chaosHarness) promScalar(expr string) float64 {
+	for _, r := range h.promQuery(expr) {
+		if len(r.Value) == 2 {
+			v, _ := strconv.ParseFloat(fmt.Sprint(r.Value[1]), 64)
+			return v
+		}
+	}
+	return 0
+}
+
+func (h *chaosHarness) promAtOrBelow(expr string, threshold float64) float64 {
+	type bucket struct{ le, count float64 }
+	var buckets []bucket
+	for _, r := range h.promQuery(expr) {
+		if len(r.Value) != 2 {
+			continue
+		}
+		le, err := strconv.ParseFloat(r.Metric["le"], 64)
+		if err != nil {
+			continue
+		}
+		count, _ := strconv.ParseFloat(fmt.Sprint(r.Value[1]), 64)
+		buckets = append(buckets, bucket{le, count})
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].le < buckets[j].le })
+	loLe, loCount := 0.0, 0.0
+	for _, b := range buckets {
+		switch {
+		case b.le == threshold:
+			return b.count
+		case b.le < threshold:
+			loLe, loCount = b.le, b.count
+		case math.IsInf(b.le, 1):
+			return loCount
+		default:
+			return loCount + (b.count-loCount)*(threshold-loLe)/(b.le-loLe)
+		}
+	}
+	return loCount
+}
+
+// describe reads the experiment's outcome and analysis for the log, so an abort in CI is
+// explained without a reproduction; never used as evidence.
+func (h *chaosHarness) describe(name string) string {
+	cr := h.getExperiment(name)
+	if cr == nil {
+		return name + ": gone"
+	}
+	phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
+	reason, _, _ := unstructured.NestedString(cr.Object, "status", "reason")
+	abort, _, _ := unstructured.NestedString(cr.Object, "status", "abortReason")
+	windows, _, _ := unstructured.NestedInt64(cr.Object, "status", "analysis", "faultWindows")
+	worstErr, _, _ := unstructured.NestedFieldNoCopy(cr.Object, "status", "analysis", "worstErrorRate")
+	worstSlow, _, _ := unstructured.NestedFieldNoCopy(cr.Object, "status", "analysis", "worstSlowFraction")
+	return fmt.Sprintf("%s: phase=%s reason=%s abortReason=%q score=%.1f faultWindows=%d worstErrorRate=%v worstSlowFraction=%v (informational)",
+		name, phase, reason, abort, h.score(name), windows, worstErr, worstSlow)
 }
 
 func (h *chaosHarness) deleteExperiment(name string) {

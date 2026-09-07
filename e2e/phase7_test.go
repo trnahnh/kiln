@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -289,22 +290,28 @@ func (h *traceHarness) forwardJaeger() {
 }
 
 func (h *auditHarness) portForward(ns, pod string, port int) (string, chan struct{}) {
-	req := h.cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("portforward")
-	transport, upgrader, err := spdy.RoundTripperFor(h.cfg)
-	h.g.Expect(err).NotTo(HaveOccurred())
+	return portForward(h.t, h.g, h.cfg, h.cs, ns, pod, port)
+}
+
+// portForward opens a port-forward to one pod and returns the local base URL; the port is
+// chosen by the kernel.
+func portForward(t *testing.T, g *WithT, cfg *rest.Config, cs *kubernetes.Clientset, ns, pod string, port int) (string, chan struct{}) {
+	req := cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("portforward")
+	transport, upgrader, err := spdy.RoundTripperFor(cfg)
+	g.Expect(err).NotTo(HaveOccurred())
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
 	stop := make(chan struct{})
 	ready := make(chan struct{})
 	fw, err := portforward.New(dialer, []string{fmt.Sprintf("0:%d", port)}, stop, ready, io.Discard, os.Stderr)
-	h.g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).NotTo(HaveOccurred())
 	go func() {
 		if err := fw.ForwardPorts(); err != nil {
-			h.t.Logf("port-forward to %s/%s ended: %v", ns, pod, err)
+			t.Logf("port-forward to %s/%s ended: %v", ns, pod, err)
 		}
 	}()
 	<-ready
 	ports, err := fw.GetPorts()
-	h.g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).NotTo(HaveOccurred())
 	return fmt.Sprintf("http://127.0.0.1:%d", ports[0].Local), stop
 }
 
