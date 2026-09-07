@@ -203,8 +203,10 @@ status:
   "details": {"outcome": "Ready"}
 }
 
-hash = sha256( prev_hash + "\\n" + event_id + "\\n" + actor + "\\n" + action
-             + "\\n" + resource + "\\n" + occurred_at + "\\n" + canonical(details) )`,
+hash = sha256(
+  prev_hash + "\\n" + event_id + "\\n" + actor + "\\n" + action
+  + "\\n" + resource + "\\n" + occurred_at + "\\n" + canonical(details)
+)`,
     },
   },
 ];
