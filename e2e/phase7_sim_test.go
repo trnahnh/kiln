@@ -647,6 +647,7 @@ func (s *simulation) report() {
 	g.Expect(failures).To(BeEmpty(), "every request must complete or be stopped by the guardrail it was meant to trip")
 	for _, r := range table {
 		g.Expect(r.n).To(BeNumerically(">", 0), "row %q has no samples", r.name)
+		g.Expect(r.errors).To(BeZero(), "row %q has %d errors; a table with an unexplained failure is not the deliverable", r.name, r.errors)
 	}
 }
 
@@ -932,13 +933,16 @@ func (s *simulation) policyRow(rows []auditRow) *reportRow {
 // the client and cross-checked against the row count read with psql.
 func (s *simulation) auditQueryRow(rows []auditRow) *reportRow {
 	r := &reportRow{name: "Audit query (actor, time range)", baseline: baselineAudit}
-	from := s.start.UTC().Add(-time.Minute).Format(time.RFC3339)
+	// The window is the week itself; the rollouts every identity submitted during setup
+	// fall before it, and the psql count must apply the same bound.
+	fromT := s.start.UTC().Add(-time.Minute)
+	from := fromT.Format(time.RFC3339)
 	to := time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
 	for _, id := range s.identities {
 		r.n++
 		expected := 0
 		for _, row := range rows {
-			if row.actor == id.subject {
+			if row.actor == id.subject && !rowTime(s.g, row.occurredAt).Before(fromT) {
 				expected++
 			}
 		}
