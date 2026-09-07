@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import CodePanel from "./CodePanel";
 import FacetGlyph from "./FacetGlyph";
 import { specimens } from "@/content/stack";
@@ -19,6 +19,14 @@ function glow(node: number | null) {
 
 export default function Specimens({ readouts }: Props) {
   const [active, setActive] = useState(0);
+  useEffect(() => {
+    const onSelect = (e: Event) => {
+      const node = (e as CustomEvent<{ node: number }>).detail?.node;
+      if (typeof node === "number" && node >= 0 && node < specimens.length) setActive(node);
+    };
+    window.addEventListener("select-specimen", onSelect);
+    return () => window.removeEventListener("select-specimen", onSelect);
+  }, []);
   const s = specimens[active];
   const slug = adrSlugs[s.adr] ?? adrSlugsExtra[s.adr];
 

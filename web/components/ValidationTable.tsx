@@ -1,7 +1,8 @@
 import { validationRows, source, completeness } from "@/content/readouts";
 import { DOCS } from "@/content/site";
 
-export default function ValidationTable() {
+export default function ValidationTable({ bare = false }: { bare?: boolean }) {
+  if (bare) return <TableBody />;
   return (
     <section id="validation" className="mx-auto w-full max-w-6xl border-t border-hairline px-6 py-20 md:px-8 md:py-28">
       <div className="md:grid md:grid-cols-12 md:gap-8">
@@ -15,6 +16,14 @@ export default function ValidationTable() {
           ; this page fails its build if the two ever differ.
         </p>
       </div>
+      <TableBody />
+    </section>
+  );
+}
+
+function TableBody() {
+  return (
+    <>
       <table className="validation mt-12">
         <thead>
           <tr>
@@ -63,6 +72,6 @@ export default function ValidationTable() {
         </a>{" "}
         on commit {source.commit}.
       </p>
-    </section>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import { invariants, adrSlugs, adrUrl } from "@/content/site";
 
-export default function Invariants() {
+export default function Invariants({ bare = false }: { bare?: boolean }) {
+  if (bare) return <InvariantsList />;
   return (
     <section id="invariants" className="mx-auto w-full max-w-6xl border-t border-hairline px-6 py-20 md:px-8 md:py-28">
       <div className="md:grid md:grid-cols-12 md:gap-8">
@@ -12,6 +13,14 @@ export default function Invariants() {
           supersedes it.
         </p>
       </div>
+      <InvariantsList />
+    </section>
+  );
+}
+
+function InvariantsList() {
+  return (
+    <>
       <ul className="mt-14 grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2">
         {invariants.map((inv) => (
           <li key={inv.adr} className="border-t border-hairline pt-5">
@@ -25,6 +34,6 @@ export default function Invariants() {
           </li>
         ))}
       </ul>
-    </section>
+    </>
   );
 }
