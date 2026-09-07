@@ -25,6 +25,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
+    implementation("org.springframework.boot:spring-boot-starter-opentelemetry")
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("io.fabric8:kubernetes-client:7.4.0")
@@ -37,6 +38,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers-kafka")
     testImplementation("org.testcontainers:testcontainers-postgresql")
     testImplementation("org.springframework.kafka:spring-kafka-test")
+    testImplementation("io.micrometer:micrometer-tracing-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

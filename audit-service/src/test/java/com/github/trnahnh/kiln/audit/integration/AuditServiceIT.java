@@ -3,6 +3,8 @@ package com.github.trnahnh.kiln.audit.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -12,9 +14,17 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeAll;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Tag;
@@ -291,6 +301,16 @@ class AuditServiceIT {
                 .containsEntry("resource", "DatabaseClaim/team-checkout/checkout-db");
         assertThat((String) row.get("details")).contains("\"outcome\": \"Received\"");
 
+        // One trace from the HTTP request onward (ADR-0021): the applied CR carries the
+        // request's W3C traceparent, and the record on the topic carries the same trace.
+        ArgumentCaptor<GenericKubernetesResource> sent = ArgumentCaptor.forClass(GenericKubernetesResource.class);
+        verify(applier, atLeastOnce()).apply(any(), sent.capture());
+        String traceparent = sent.getValue().getMetadata().getAnnotations().get("platform.internal/traceparent");
+        assertThat(traceparent).matches("00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]");
+        String traceId = traceparent.split("-")[1];
+        String eventId = accepted.get("eventId").asString();
+        assertThat(recordHeader(eventId, "traceparent")).startsWith("00-" + traceId + "-");
+
         when(applier.apply(any(), any())).thenThrow(new AdmissionRejectedException(400,
                 "admission webhook \"validate.kyverno.svc-fail\" denied the request: POLICY_DENIED rule=tags-required: tags.team is mandatory", null));
         HttpStatus denied = status(() -> client().post().uri("/v1/requests")
@@ -308,6 +328,29 @@ class AuditServiceIT {
                 .body("{\"kind\":\"Deployment\",\"metadata\":{\"name\":\"x\"}}").retrieve().toBodilessEntity()))
                 .isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(HashChain.verify(links())).isEmpty();
+    }
+
+    /** Reads the topic from the beginning with a plain consumer and returns one header of the record carrying eventId. */
+    private String recordHeader(String eventId, String header) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "it-headers-" + UUID.randomUUID());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(props)) {
+            consumer.subscribe(List.of(TOPIC));
+            Instant deadline = Instant.now().plusSeconds(30);
+            while (Instant.now().isBefore(deadline)) {
+                for (ConsumerRecord<String, byte[]> rec : consumer.poll(Duration.ofSeconds(1))) {
+                    if (new String(rec.value(), StandardCharsets.UTF_8).contains(eventId)) {
+                        Header h = rec.headers().lastHeader(header);
+                        return h == null ? null : new String(h.value(), StandardCharsets.UTF_8);
+                    }
+                }
+            }
+        }
+        throw new AssertionError("no record on " + TOPIC + " carries " + eventId);
     }
 
     private JsonNode get(String path, String token) {

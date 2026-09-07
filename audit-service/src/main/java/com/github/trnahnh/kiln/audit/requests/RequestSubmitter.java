@@ -38,11 +38,13 @@ public class RequestSubmitter {
     private final ManifestApplier applier;
     private final EventPublisher publisher;
     private final Clock clock;
+    private final RequestTrace trace;
 
-    public RequestSubmitter(ManifestApplier applier, EventPublisher publisher, Clock clock) {
+    public RequestSubmitter(ManifestApplier applier, EventPublisher publisher, Clock clock, RequestTrace trace) {
         this.applier = applier;
         this.publisher = publisher;
         this.clock = clock;
+        this.trace = trace;
     }
 
     public record Accepted(String resource, UUID eventId) {
@@ -85,12 +87,13 @@ public class RequestSubmitter {
         }
         Map<String, String> annotations = meta.getAnnotations() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(meta.getAnnotations());
         annotations.put(ANNOTATION_REQUESTED_BY, subject);
+        trace.current().ifPresent(tp -> annotations.put(RequestTrace.ANNOTATION_TRACEPARENT, tp));
         meta.setAnnotations(annotations);
         manifest.setMetadata(meta);
         String resource = manifest.getKind() + "/" + meta.getNamespace() + "/" + meta.getName();
 
         try {
-            GenericKubernetesResource applied = applier.apply(context, manifest);
+            GenericKubernetesResource applied = trace.admission(resource, () -> applier.apply(context, manifest));
             String version = applied.getMetadata() == null ? "" : firstNonBlank(applied.getMetadata().getResourceVersion(), applied.getMetadata().getUid());
             UUID eventId = deterministicId(resource, ACTION_PROVISION_REQUEST, version);
             publisher.publish(new WireEvent(eventId, subject, ACTION_PROVISION_REQUEST, resource, clock.instant(),

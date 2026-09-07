@@ -12,7 +12,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,12 +31,30 @@ class RequestSubmitterTest {
 
     private final ManifestApplier applier = mock(ManifestApplier.class);
     private final EventPublisher publisher = mock(EventPublisher.class);
+    private final RequestTrace trace = mock(RequestTrace.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-09-06T10:00:00Z"), ZoneOffset.UTC);
     private RequestSubmitter submitter;
 
     @BeforeEach
     void setUp() {
-        submitter = new RequestSubmitter(applier, publisher, clock);
+        when(trace.current()).thenReturn(Optional.empty());
+        when(trace.admission(any(), any())).thenAnswer(inv -> inv.<Supplier<Object>>getArgument(1).get());
+        submitter = new RequestSubmitter(applier, publisher, clock, trace);
+    }
+
+    @Test
+    void stampsTheRequestsTraceOnWhatItApplies() {
+        when(trace.current()).thenReturn(Optional.of("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+        when(applier.apply(any(), any())).thenReturn(manifest("DatabaseClaim", "team-checkout", "checkout-db"));
+
+        submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+
+        ArgumentCaptor<GenericKubernetesResource> sent = ArgumentCaptor.forClass(GenericKubernetesResource.class);
+        verify(applier).apply(any(), sent.capture());
+        assertThat(sent.getValue().getMetadata().getAnnotations())
+                .containsEntry(RequestTrace.ANNOTATION_TRACEPARENT, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+                .containsEntry(RequestSubmitter.ANNOTATION_REQUESTED_BY, "dev@company.com");
+        verify(trace).admission(org.mockito.ArgumentMatchers.eq("DatabaseClaim/team-checkout/checkout-db"), any());
     }
 
     private static GenericKubernetesResource manifest(String kind, String ns, String name) {
