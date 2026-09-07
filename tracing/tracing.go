@@ -40,7 +40,7 @@ func Setup(ctx context.Context, service, endpoint string) (func(context.Context)
 	if err != nil {
 		return nil, fmt.Errorf("otlp exporter for %s: %w", endpoint, err)
 	}
-	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName(service)))
+	res, err := resource.Merge(resource.Default(), resource.NewSchemaless(semconv.ServiceName(service)))
 	if err != nil {
 		return nil, fmt.Errorf("trace resource: %w", err)
 	}

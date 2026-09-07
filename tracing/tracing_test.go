@@ -104,3 +104,17 @@ func TestSetupWithoutEndpointIsANoop(t *testing.T) {
 		t.Fatal("no endpoint must leave the global provider untouched")
 	}
 }
+
+func TestSetupWithAnEndpointInstallsAnExportingProvider(t *testing.T) {
+	shutdown, err := Setup(context.Background(), "kiln-test", "127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otel.SetTracerProvider(noop.NewTracerProvider())
+	if _, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider); !ok {
+		t.Fatalf("an endpoint must install the SDK provider, got %T", otel.GetTracerProvider())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = shutdown(ctx)
+}
