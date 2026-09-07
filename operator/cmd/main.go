@@ -25,6 +25,7 @@ import (
 	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
 	"github.com/trnahnh/kiln/operator/internal/controller"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 var (
@@ -38,18 +39,31 @@ func init() {
 }
 
 func main() {
-	var metricsAddr, probeAddr, auditBrokers, auditTopic string
+	var metricsAddr, probeAddr, auditBrokers, auditTopic, otlpEndpoint, schedulerName string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to; 0 disables it.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election so only one manager reconciles.")
 	flag.StringVar(&auditBrokers, "audit-brokers", "", "Comma-separated Kafka brokers audit events are published to; empty disables publishing.")
 	flag.StringVar(&auditTopic, "audit-topic", audit.Topic, "Kafka topic audit events are published to.")
+	flag.StringVar(&otlpEndpoint, "otlp-endpoint", "", "OTLP gRPC endpoint spans are exported to; empty disables tracing export.")
+	flag.StringVar(&schedulerName, "scheduler-name", "", "Scheduler that places database pods; empty leaves them to the default scheduler.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	stopTracing, err := tracing.Setup(context.Background(), "kiln-operator", otlpEndpoint)
+	if err != nil {
+		setupLog.Error(err, "failed to start tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = stopTracing(flush)
+	}()
 
 	// Plain HTTP metrics: Prometheus scrapes by pod annotation (ADR-0001).
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -72,10 +86,11 @@ func main() {
 	}
 
 	if err := (&controller.TenantDatabaseReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: recorder,
-		Audit:    publisher,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      recorder,
+		Audit:         publisher,
+		SchedulerName: schedulerName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "failed to create controller", "controller", "tenantdatabase")
 		os.Exit(1)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/trnahnh/kiln/audit"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 const (
@@ -239,6 +240,18 @@ func auditEvent(tdb *platformv1.TenantDatabase, action, outcome string) audit.Ev
 	return audit.Event{}
 }
 
+// auditTrace is the trace the matching event was published under, empty when none.
+func auditTrace(tdb *platformv1.TenantDatabase, action, outcome string) string {
+	resource := audit.ResourceRef("TenantDatabase", tdb.Namespace, tdb.Name)
+	events, traces := auditLog.Events(), auditLog.TraceIDs()
+	for i, e := range events {
+		if e.Resource == resource && e.Action == action && e.Details["outcome"] == outcome {
+			return traces[i]
+		}
+	}
+	return ""
+}
+
 var _ = Describe("TenantDatabase reconciler", func() {
 	Context("provisioning", func() {
 		It("creates every owned resource, then becomes Ready when the StatefulSet is ready", func() {
@@ -291,6 +304,27 @@ var _ = Describe("TenantDatabase reconciler", func() {
 			ev := auditEvent(tdb, audit.ActionProvision, "Ready")
 			Expect(ev.Actor).To(Equal("system:tenantdatabase"), "no requested-by annotation attributes the action to the controller")
 			Expect(ev.EventID).To(Equal(audit.DeterministicID(ev.Resource, audit.ActionProvision, string(ready.UID))))
+			Expect(auditTrace(tdb, audit.ActionProvision, "Ready")).To(BeEmpty(), "no traceparent annotation, no trace to join")
+		})
+
+		It("joins the trace the database was requested under and hands it to its pod", func() {
+			ns := newNamespace()
+			tdb := newTenantDatabase(ns, "traced")
+			tdb.Annotations = map[string]string{tracing.AnnotationTraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
+			Expect(k8sClient.Create(ctx, tdb)).To(Succeed())
+
+			sts := &appsv1.StatefulSet{}
+			Eventually(func() error { return get(sts, ns, statefulSetName(tdb)) }, timeout, interval).Should(Succeed())
+			Expect(sts.Spec.Template.Annotations).To(HaveKeyWithValue(tracing.AnnotationTraceParent, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"),
+				"the pod carries the request's trace so its placement is a span of it (ADR-0021)")
+			Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(labelWorkloadClass, workloadClassLatencySensitive))
+			Expect(sts.Spec.Selector.MatchLabels).NotTo(HaveKey(labelWorkloadClass), "the class is a placement hint, not part of the selector")
+			Expect(sts.Spec.Template.Spec.SchedulerName).To(Equal("default-scheduler"), "no --scheduler-name leaves the default scheduler in charge")
+
+			markStatefulSetReady(tdb)
+			Eventually(phaseOf(tdb), timeout, interval).Should(Equal(platformv1.PhaseReady))
+			Eventually(func() string { return auditTrace(tdb, audit.ActionProvision, "Ready") }, timeout, interval).
+				Should(Equal("0af7651916cd43dd8448eb211c80319c"), "the PROVISION event is published under the request's trace")
 		})
 
 		It("attributes the provision to the requested-by annotation when present", func() {

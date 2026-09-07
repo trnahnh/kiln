@@ -13,6 +13,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 const (
@@ -25,6 +26,11 @@ const (
 
 	operationBackup  = "backup"
 	operationRestore = "restore"
+
+	// The scheduler plugin's workload-class contract (API_REFERENCE.md, "Scheduler placement
+	// contract").
+	labelWorkloadClass            = "kiln.platform.internal/workload-class"
+	workloadClassLatencySensitive = "latency-sensitive"
 
 	postgresPort     = 5432
 	postgresDataPath = "/var/lib/postgresql/data"
@@ -111,8 +117,13 @@ func desiredService(tdb *platformv1.TenantDatabase) *corev1.Service {
 
 // The data volume is a PVC the operator owns rather than a volumeClaimTemplate: templates
 // cannot be resized in place and their claims are not garbage-collected with the owner.
-func desiredStatefulSet(tdb *platformv1.TenantDatabase) *appsv1.StatefulSet {
+func desiredStatefulSet(tdb *platformv1.TenantDatabase, schedulerName string) *appsv1.StatefulSet {
 	labels := databasePodLabels(tdb)
+	// A database is latency-sensitive by class so the scheduler never places it on spot
+	// capacity (ADR-0009); the pod inherits the request's trace so its placement is one span
+	// of the same trace (ADR-0021).
+	podLabels := databasePodLabels(tdb)
+	podLabels[labelWorkloadClass] = workloadClassLatencySensitive
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: statefulSetName(tdb), Namespace: tdb.Namespace, Labels: labels},
 		Spec: appsv1.StatefulSetSpec{
@@ -120,8 +131,9 @@ func desiredStatefulSet(tdb *platformv1.TenantDatabase) *appsv1.StatefulSet {
 			ServiceName: serviceName(tdb),
 			Selector:    &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels, Annotations: tracing.Inherit(tdb.Annotations, nil)},
 				Spec: corev1.PodSpec{
+					SchedulerName: schedulerName,
 					Containers: []corev1.Container{{
 						Name:  "postgres",
 						Image: postgresImage(tdb),

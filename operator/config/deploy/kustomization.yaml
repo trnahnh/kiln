@@ -21,3 +21,9 @@ patches:
     - op: add
       path: /spec/template/spec/containers/0/args/-
       value: --audit-brokers=kafka.kiln-kafka.svc:9092
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --otlp-endpoint=jaeger.monitoring.svc:4317
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --scheduler-name=kiln-scheduler

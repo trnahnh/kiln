@@ -2,6 +2,7 @@ FROM golang:1.26 AS builder
 ENV GOWORK=off
 WORKDIR /workspace
 COPY audit/ audit/
+COPY tracing/ tracing/
 COPY operator/go.mod operator/go.sum operator/
 RUN cd operator && go mod download
 COPY operator/ operator/

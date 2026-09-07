@@ -42,6 +42,9 @@ type TenantDatabaseReconciler struct {
 	Commands Commands
 	Now      func() time.Time
 	Audit    audit.Publisher
+	// SchedulerName places database pods through a named scheduler; empty leaves them to
+	// the default scheduler, which is what a cluster without kiln-scheduler needs.
+	SchedulerName string
 }
 
 // +kubebuilder:rbac:groups=platform.internal,resources=tenantdatabases,verbs=get;list;watch;create;update;patch;delete
@@ -90,12 +93,12 @@ func (r *TenantDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *TenantDatabaseReconciler) reconcileProvisioning(ctx context.Context, tdb *platformv1.TenantDatabase) (ctrl.Result, error) {
 	if tdb.Spec.Engine != platformv1.EnginePostgres {
-		r.fail(tdb, platformv1.ReasonUnsupportedEngine, fmt.Sprintf("engine %q is not supported by this operator", tdb.Spec.Engine))
+		r.fail(ctx, tdb, platformv1.ReasonUnsupportedEngine, fmt.Sprintf("engine %q is not supported by this operator", tdb.Spec.Engine))
 		return ctrl.Result{}, nil
 	}
 	if err := r.ensureDependents(ctx, tdb); err != nil {
 		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
-			r.fail(tdb, platformv1.ReasonProvisionFailed, err.Error())
+			r.fail(ctx, tdb, platformv1.ReasonProvisionFailed, err.Error())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -121,7 +124,7 @@ func (r *TenantDatabaseReconciler) reconcileProvisioning(ctx context.Context, td
 	}
 	timeToReady.Observe(r.now().Sub(tdb.CreationTimestamp.Time).Seconds())
 	r.markSettled(tdb)
-	r.publish(tdb, audit.ActionProvision, map[string]any{"outcome": "Ready"}, string(tdb.UID))
+	r.publish(ctx, tdb, audit.ActionProvision, tdb.CreationTimestamp.Time, map[string]any{"outcome": "Ready"}, string(tdb.UID))
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -157,14 +160,14 @@ func (r *TenantDatabaseReconciler) reconcileReady(ctx context.Context, tdb *plat
 			// The StorageClass refuses expansion or the claim is not bound yet: report it and
 			// keep retrying rather than backing off with a stack trace.
 			r.Recorder.Eventf(tdb, corev1.EventTypeWarning, platformv1.ReasonScaleFailed, "data volume resize rejected: %v", err)
-			r.publish(tdb, audit.ActionScale, map[string]any{"outcome": "Rejected", "from": current.String(), "to": desired.String(), "reason": err.Error()}, "Rejected", current.String(), desired.String())
+			r.publish(ctx, tdb, audit.ActionScale, time.Time{}, map[string]any{"outcome": "Rejected", "from": current.String(), "to": desired.String(), "reason": err.Error()}, "Rejected", current.String(), desired.String())
 			setCondition(tdb, platformv1.ConditionReady, metav1.ConditionFalse, platformv1.ReasonScaling, "data volume resize pending")
 			setCondition(tdb, platformv1.ConditionProgressing, metav1.ConditionFalse, platformv1.ReasonScaleFailed, err.Error())
 			return ctrl.Result{RequeueAfter: pollInterval}, nil
 		}
 		log.Info("growing data volume", "from", current.String(), "to", desired.String())
 		r.Recorder.Eventf(tdb, corev1.EventTypeNormal, platformv1.ReasonScaling, "growing data volume from %s to %s", current.String(), desired.String())
-		r.publish(tdb, audit.ActionScale, map[string]any{"outcome": "Applied", "from": current.String(), "to": desired.String()}, "Applied", current.String(), desired.String())
+		r.publish(ctx, tdb, audit.ActionScale, time.Time{}, map[string]any{"outcome": "Applied", "from": current.String(), "to": desired.String()}, "Applied", current.String(), desired.String())
 	}
 
 	wantsRestore := tdb.Annotations[platformv1.AnnotationRestoreFrom] != ""
@@ -209,7 +212,7 @@ func (r *TenantDatabaseReconciler) reconcileOperation(ctx context.Context, tdb *
 	}
 	if job == nil {
 		r.Recorder.Eventf(tdb, corev1.EventTypeWarning, "JobMissing", "%s Job disappeared before it finished", operation)
-		return ctrl.Result{Requeue: true}, r.finishOperation(tdb, operation, false, "")
+		return ctrl.Result{Requeue: true}, r.finishOperation(ctx, tdb, operation, false, "", time.Time{})
 	}
 
 	pvc := &corev1.PersistentVolumeClaim{}
@@ -232,7 +235,7 @@ func (r *TenantDatabaseReconciler) reconcileOperation(ctx context.Context, tdb *
 		return ctrl.Result{RequeueAfter: pollInterval}, nil
 	}
 
-	return ctrl.Result{Requeue: true}, r.finishOperation(tdb, operation, jobSucceeded(job), job.Annotations[annotationBackupID])
+	return ctrl.Result{Requeue: true}, r.finishOperation(ctx, tdb, operation, jobSucceeded(job), job.Annotations[annotationBackupID], job.CreationTimestamp.Time)
 }
 
 func (r *TenantDatabaseReconciler) reconcileDelete(ctx context.Context, tdb *platformv1.TenantDatabase) (ctrl.Result, error) {
@@ -268,7 +271,7 @@ func (r *TenantDatabaseReconciler) ensureDependents(ctx context.Context, tdb *pl
 		desiredPVC(tdb, dataPVCName(tdb), tdb.Spec.StorageGB),
 		desiredPVC(tdb, backupsPVCName(tdb), tdb.Spec.StorageGB),
 		desiredService(tdb),
-		desiredStatefulSet(tdb),
+		desiredStatefulSet(tdb, r.SchedulerName),
 	}
 	for _, obj := range objects {
 		if err := r.createIfMissing(ctx, tdb, obj); err != nil {
@@ -330,7 +333,7 @@ func (r *TenantDatabaseReconciler) startOperation(ctx context.Context, tdb *plat
 		}
 	}
 	r.Recorder.Eventf(tdb, corev1.EventTypeNormal, "OperationStarted", "%s started (%s)", operation, backupID)
-	r.publish(tdb, auditAction(operation), map[string]any{"outcome": "Started", "backupId": backupID}, "Started", backupID)
+	r.publish(ctx, tdb, auditAction(operation), time.Time{}, map[string]any{"outcome": "Started", "backupId": backupID}, "Started", backupID)
 	return r.enterOperation(tdb, operation)
 }
 
@@ -349,7 +352,7 @@ func (r *TenantDatabaseReconciler) enterOperation(tdb *platformv1.TenantDatabase
 	return nil
 }
 
-func (r *TenantDatabaseReconciler) finishOperation(tdb *platformv1.TenantDatabase, operation string, succeeded bool, backupID string) error {
+func (r *TenantDatabaseReconciler) finishOperation(ctx context.Context, tdb *platformv1.TenantDatabase, operation string, succeeded bool, backupID string, began time.Time) error {
 	outcome := "Failed"
 	if succeeded {
 		outcome = "Succeeded"
@@ -358,7 +361,7 @@ func (r *TenantDatabaseReconciler) finishOperation(tdb *platformv1.TenantDatabas
 	if idKey == "" {
 		idKey = "unknown"
 	}
-	r.publish(tdb, auditAction(operation), map[string]any{"outcome": outcome, "backupId": backupID}, outcome, idKey)
+	r.publish(ctx, tdb, auditAction(operation), began, map[string]any{"outcome": outcome, "backupId": backupID}, outcome, idKey)
 	switch {
 	case operation == operationBackup && succeeded:
 		if t, err := time.Parse(backupIDLayout, backupID); err == nil {
@@ -393,12 +396,12 @@ func (r *TenantDatabaseReconciler) transition(tdb *platformv1.TenantDatabase, ev
 	return nil
 }
 
-func (r *TenantDatabaseReconciler) fail(tdb *platformv1.TenantDatabase, reason, message string) {
+func (r *TenantDatabaseReconciler) fail(ctx context.Context, tdb *platformv1.TenantDatabase, reason, message string) {
 	tdb.Status.Phase = platformv1.PhaseFailed
 	setCondition(tdb, platformv1.ConditionReady, metav1.ConditionFalse, reason, message)
 	setCondition(tdb, platformv1.ConditionProgressing, metav1.ConditionFalse, reason, message)
 	r.Recorder.Event(tdb, corev1.EventTypeWarning, reason, message)
-	r.publish(tdb, audit.ActionProvision, map[string]any{"outcome": "Failed", "reason": reason}, string(tdb.UID), reason)
+	r.publish(ctx, tdb, audit.ActionProvision, tdb.CreationTimestamp.Time, map[string]any{"outcome": "Failed", "reason": reason}, string(tdb.UID), reason)
 }
 
 func auditAction(operation string) string {
