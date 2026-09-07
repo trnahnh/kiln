@@ -47,3 +47,21 @@ export const readouts: Record<NodeId, Readout> = {
     detail: `for an actor and time-range query. ${metrics.completeness.auditRows} rows, ${metrics.completeness.publishFailures} publish failures, chain intact.`,
   },
 };
+
+export const band: Record<NodeId, { value: string; label: string }> = {
+  gitops: { value: row(rowKeys.policy).p50, label: "to deny an oversized claim at admission" },
+  operator: {
+    value: `${row(rowKeys.provisioning).p50} p50`,
+    label: `standard Postgres to Ready, ${row(rowKeys.provisioning).p95} p95`,
+  },
+  scheduler: { value: `${metrics.scheduler.cheaperPercent}%`, label: "cheaper than default-scheduler, same trace" },
+  delivery: { value: `${metrics.guardrails.rollbackSeconds} s`, label: "injected regression to rollback on the mesh" },
+  chaos: {
+    value: `${metrics.guardrails.abortSeconds} s`,
+    label: `breach to abort, fault gone ${metrics.guardrails.faultGoneAfterAbortSeconds} s later`,
+  },
+  audit: {
+    value: `${row(rowKeys.auditQuery).p50} p50`,
+    label: `actor and time-range query, ${row(rowKeys.auditQuery).p95} p95`,
+  },
+};

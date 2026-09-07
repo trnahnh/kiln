@@ -4,7 +4,7 @@ export default function Invariants() {
   return (
     <section id="invariants" className="mx-auto w-full max-w-6xl border-t border-hairline px-6 py-20 md:px-8 md:py-28">
       <div className="md:grid md:grid-cols-12 md:gap-8">
-        <h2 className="text-2xl font-light tracking-tight text-fg md:col-span-5">
+        <h2 className="section-title md:col-span-5">
           Guarantees that hold structurally, not by convention.
         </h2>
         <p className="measure mt-3 text-[15px] leading-relaxed text-fg-faint md:col-span-6 md:col-start-7 md:mt-0">
