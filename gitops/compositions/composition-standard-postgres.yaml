@@ -51,3 +51,10 @@ spec:
                 toFieldPath: metadata.annotations[platform.internal/requested-by]
                 policy:
                   fromFieldPath: Optional
+              # The same path carries the request's trace, so the operator's spans join it
+              # (ADR-0021).
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.annotations[platform.internal/traceparent]
+                toFieldPath: metadata.annotations[platform.internal/traceparent]
+                policy:
+                  fromFieldPath: Optional

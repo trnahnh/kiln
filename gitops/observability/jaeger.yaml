@@ -1,0 +1,67 @@
+# Jaeger v2 all-in-one with in-memory storage: the one place every subsystem's spans go, so
+# a request is one trace from POST /v1/requests to Ready (ADR-0021). No config file: the
+# image's built-in all-in-one configuration is used. Plain manifests as ADR-0001 requires.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: monitoring
+  labels:
+    app: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.20.0
+          env:
+            # The built-in config binds every listener to localhost.
+            - name: JAEGER_LISTEN_HOST
+              value: "0.0.0.0"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: query
+              containerPort: 16686
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: monitoring
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+    - name: query
+      port: 16686
+      targetPort: query

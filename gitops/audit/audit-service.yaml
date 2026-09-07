@@ -95,6 +95,8 @@ spec:
               value: kafka.kiln-kafka.svc:9092
             - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_PUBLIC_KEY_LOCATION
               value: file:/etc/kiln-audit/jwt/public.pem
+            - name: MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT
+              value: http://jaeger.monitoring.svc:4318/v1/traces
             - name: JAVA_TOOL_OPTIONS
               value: -Xmx384m
           volumeMounts:

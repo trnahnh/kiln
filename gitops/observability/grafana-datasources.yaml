@@ -14,3 +14,9 @@ data:
         url: http://prometheus.monitoring.svc:9090
         isDefault: true
         editable: false
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        access: proxy
+        url: http://jaeger.monitoring.svc:16686
+        editable: false
