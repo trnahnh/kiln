@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "og": "node scripts/og.mjs",
     "film": "node scripts/film.mjs",
-    "gating": "node scripts/gating.mjs"
+    "gating": "node scripts/gating.mjs",
+    "build:draft": "node scripts/build-draft.ts"
   },
   "dependencies": {
     "next": "16.3.4",
