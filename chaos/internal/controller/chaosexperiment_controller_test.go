@@ -11,9 +11,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/trnahnh/kiln/audit"
-	"github.com/trnahnh/kiln/tracing"
 	platformv1 "github.com/trnahnh/kiln/chaos/api/v1"
 	"github.com/trnahnh/kiln/slo"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 const (
