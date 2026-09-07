@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/tracing"
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
 	"github.com/trnahnh/kiln/slo"
@@ -50,6 +51,24 @@ func auditEvent(action, outcome string) audit.Event {
 	return audit.Event{}
 }
 
+// The rollout is created as if through POST /v1/requests, which stamps the request's trace;
+// every DEPLOY and ROLLBACK event must be published under it (ADR-0021).
+const (
+	requestTraceParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	requestTraceID     = "4bf92f3577b34da6a3ce929d0e0e4736"
+)
+
+func auditTraces() map[string]string {
+	out := map[string]string{}
+	events, traces := auditLog.Events(), auditLog.TraceIDs()
+	for i, e := range events {
+		if e.Resource == audit.ResourceRef("CanaryRollout", ns, appName) {
+			out[e.Action+"/"+e.Details["outcome"].(string)] = traces[i]
+		}
+	}
+	return out
+}
+
 var _ = Describe("CanaryRollout", Ordered, func() {
 	var router *mesh.Istio
 
@@ -65,7 +84,7 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		})).To(Succeed())
 		Expect(k8sClient.Create(ctx, deployment("v1"))).To(Succeed())
 		Expect(k8sClient.Create(ctx, &platformv1.CanaryRollout{
-			ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns, Annotations: map[string]string{tracing.AnnotationTraceParent: requestTraceParent}},
 			Spec: platformv1.CanaryRolloutSpec{
 				TargetDeployment: appName,
 				SuccessCriteria:  platformv1.SuccessCriteria{ErrorRateMax: 0.01, LatencyP99MaxMs: 300, MinSampleSize: 500},
@@ -155,6 +174,10 @@ var _ = Describe("CanaryRollout", Ordered, func() {
 		}, timeout, tick).Should(BeTrue(), "traffic returns to primary while the canary drains")
 		flipped := time.Now()
 		Expect(get[*platformv1.CanaryRollout](appName).Status.Reason).To(Equal(platformv1.ReasonRegressionDetected))
+		Expect(auditTraces()).To(And(
+			HaveKeyWithValue("DEPLOY/Started", requestTraceID),
+			HaveKeyWithValue("ROLLBACK/RolledBack", requestTraceID),
+		), "the rollout's events belong to the trace of the request that enabled canary delivery")
 
 		Eventually(func() int32 {
 			markRolledOut(appName)

@@ -203,7 +203,7 @@ func (r *CanaryRolloutReconciler) startRollout(ctx context.Context, cr *platform
 	r.setReady(cr, false, platformv1.ReasonWaitingForCanary, "waiting for the canary Deployment to roll out")
 	r.setProgressing(cr, true, platformv1.ReasonRolloutStarted, "template "+hash)
 	r.Recorder.Eventf(cr, corev1.EventTypeNormal, platformv1.ReasonRolloutStarted, "rolling out template %s", hash)
-	r.publish(cr, audit.ActionDeploy, map[string]any{"outcome": "Started", "templateHash": hash}, "Started", hash)
+	r.publish(ctx, cr, audit.ActionDeploy, time.Time{}, map[string]any{"outcome": "Started", "templateHash": hash}, "Started", hash)
 	return ctrl.Result{RequeueAfter: waitRequeue}, nil
 }
 
@@ -321,7 +321,7 @@ func (r *CanaryRolloutReconciler) promote(ctx context.Context, cr *platformv1.Ca
 	}
 	cr.Status.PromotedTemplateHash = hash
 	r.Recorder.Eventf(cr, corev1.EventTypeNormal, platformv1.ReasonPromoted, "primary now runs template %s", hash)
-	r.publish(cr, audit.ActionDeploy, map[string]any{"outcome": "Promoted", "templateHash": hash}, "Promoted", hash)
+	r.publish(ctx, cr, audit.ActionDeploy, rolloutBegan(cr), map[string]any{"outcome": "Promoted", "templateHash": hash}, "Promoted", hash)
 	return r.beginDrain(ctx, cr, cfg, target, platformv1.ReasonPromoted, platformv1.AnalysisPass)
 }
 
@@ -332,7 +332,7 @@ func (r *CanaryRolloutReconciler) rollback(ctx context.Context, cr *platformv1.C
 	}
 	r.Recorder.Eventf(cr, corev1.EventTypeWarning, "RolledBack", "%s: traffic returned to primary, canary drains for %s", msg, cfg.drainGrace(cr))
 	hash := cr.Status.ObservedTemplateHash
-	r.publish(cr, audit.ActionRollback, map[string]any{"outcome": "RolledBack", "reason": reason, "criterion": criterion, "templateHash": hash}, hash, reason)
+	r.publish(ctx, cr, audit.ActionRollback, rolloutBegan(cr), map[string]any{"outcome": "RolledBack", "reason": reason, "criterion": criterion, "templateHash": hash}, hash, reason)
 	return r.beginDrain(ctx, cr, cfg, target, reason, platformv1.AnalysisFail)
 }
 

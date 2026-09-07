@@ -27,6 +27,7 @@ import (
 	"github.com/trnahnh/kiln/delivery-controller/internal/controller"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
 	"github.com/trnahnh/kiln/slo"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 var (
@@ -40,7 +41,7 @@ func init() {
 }
 
 func main() {
-	var metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic string
+	var metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic, otlpEndpoint string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to; 0 disables it.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the probe endpoint binds to.")
@@ -48,11 +49,23 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election so only one manager reconciles.")
 	flag.StringVar(&auditBrokers, "audit-brokers", "", "Comma-separated Kafka brokers audit events are published to; empty disables publishing.")
 	flag.StringVar(&auditTopic, "audit-topic", audit.Topic, "Kafka topic audit events are published to.")
+	flag.StringVar(&otlpEndpoint, "otlp-endpoint", "", "OTLP gRPC endpoint spans are exported to; empty disables tracing export.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	stopTracing, err := tracing.Setup(context.Background(), "kiln-delivery-controller", otlpEndpoint)
+	if err != nil {
+		setupLog.Error(err, "failed to start tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = stopTracing(flush)
+	}()
 
 	// Plain HTTP metrics: Prometheus scrapes by pod annotation (ADR-0001).
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{

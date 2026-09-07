@@ -55,6 +55,7 @@ spec:
           args:
             - --prometheus-url=http://prometheus.monitoring.svc:9090
             - --audit-brokers=kafka.kiln-kafka.svc:9092
+            - --otlp-endpoint=jaeger.monitoring.svc:4317
           ports:
             - name: metrics
               containerPort: 8080
