@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import { hasSeenThisSession } from "@/lib/hero/gate";
 
-// A body-level fixed sibling of the overlay: hides on intro-shown, returns on intro-done.
-export default function ReplayIntro() {
+interface Props {
+  variant?: "fixed" | "inline";
+}
+
+// A body-level fixed sibling of the overlay on desktop (hides on intro-shown, returns on
+// intro-done); an inline link under the hero caption on phones, where a fixed pill would
+// sit on top of the content.
+export default function ReplayIntro({ variant = "fixed" }: Props) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -20,11 +26,19 @@ export default function ReplayIntro() {
   }, []);
 
   if (!visible) return null;
+  const replay = () => window.dispatchEvent(new Event("replay-intro"));
+  if (variant === "inline") {
+    return (
+      <button type="button" onClick={replay} className="mt-3 text-[13px] text-fg-faint underline underline-offset-4 md:hidden">
+        Replay intro
+      </button>
+    );
+  }
   return (
     <button
       type="button"
-      onClick={() => window.dispatchEvent(new Event("replay-intro"))}
-      className="fixed bottom-5 right-5 z-[900] rounded-full border border-hairline bg-ink px-3.5 py-1.5 text-xs text-fg-faint transition-colors hover:border-hairline-strong hover:text-fg-muted"
+      onClick={replay}
+      className="fixed bottom-5 right-5 z-[900] hidden rounded-full border border-hairline bg-ink px-3.5 py-1.5 text-xs text-fg-faint transition-colors hover:border-hairline-strong hover:text-fg-muted md:block"
     >
       Replay intro
     </button>
