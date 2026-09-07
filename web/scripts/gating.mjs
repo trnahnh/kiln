@@ -117,10 +117,10 @@ async function run() {
   await sleep(SETTLE_MS);
   s = await state(gl);
   record(
-    "no WebGL skips without writing the flag",
-    "seen=null, phase=static, skip line 'no WebGL context'",
+    "no WebGL still plays (the drawing is SVG)",
+    "seen=1, phase=intro, no skip line",
     describe(s, glLines),
-    s.seen === null && s.phase === "static" && glLines.some((l) => l.includes("no WebGL context")),
+    s.seen === "1" && s.phase === "intro" && glLines.length === 0,
   );
   await closePage(noGl.port, gl);
   noGl.close();

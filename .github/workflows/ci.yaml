@@ -50,7 +50,7 @@ jobs:
       - name: metrics.json matches docs/METRICS.md
         run: pnpm check:metrics
       - name: lattice assets are committed
-        run: pnpm build:lattice && git diff --exit-code -- public/hero
+        run: pnpm build:lattice && pnpm build:draft && git diff --exit-code -- public/hero public/draft
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
