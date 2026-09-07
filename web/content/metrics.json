@@ -1,0 +1,108 @@
+{
+  "source": {
+    "path": "docs/METRICS.md",
+    "section": "Validation results",
+    "runId": "34085396203",
+    "runUrl": "https://github.com/trnahnh/kiln/actions/runs/34085396203",
+    "commit": "78e0a2a"
+  },
+  "setup": {
+    "identities": "Ten",
+    "tracedRequest": {
+      "auditRowsSeconds": 6.94,
+      "podReadySeconds": 7,
+      "traceSeconds": 6.97
+    }
+  },
+  "validation": [
+    {
+      "requestType": "Provisioning (standard Postgres)",
+      "baseline": "Manual Terraform PR with human review: hours to a day before merge and apply.",
+      "p50": "11s",
+      "p95": "16s",
+      "n": 10,
+      "errorRate": "0.0% (0/10)",
+      "guardrail": null
+    },
+    {
+      "requestType": "Scaling (storage growth)",
+      "baseline": "Manual Terraform PR with human review: hours to a day before merge and apply.",
+      "p50": "49 ms",
+      "p95": "140 ms",
+      "n": 20,
+      "errorRate": "0.0% (0/20)",
+      "guardrail": null
+    },
+    {
+      "requestType": "Healthy deploy (canary promoted)",
+      "baseline": "Manual on-call detection of a bad deploy (minutes to tens of minutes), manual rollback.",
+      "p50": "2m14s",
+      "p95": "2m30s",
+      "n": 29,
+      "errorRate": "0.0% (0/29)",
+      "guardrail": null
+    },
+    {
+      "requestType": "Bad deploy (injected regression)",
+      "baseline": "Manual on-call detection of a bad deploy (minutes to tens of minutes), manual rollback.",
+      "p50": "50s",
+      "p95": "50s",
+      "n": 1,
+      "errorRate": "0.0% (0/1)",
+      "guardrail": "auto-rollback fired 1/1"
+    },
+    {
+      "requestType": "Chaos test (pod-kill, completed)",
+      "baseline": "Zero pre-production resilience coverage; failure modes discovered during real incidents.",
+      "p50": "46s",
+      "p95": "52s",
+      "n": 19,
+      "errorRate": "0.0% (0/19)",
+      "guardrail": null
+    },
+    {
+      "requestType": "Chaos test (injected SLO breach)",
+      "baseline": "Zero pre-production resilience coverage; failure modes discovered during real incidents.",
+      "p50": "25s",
+      "p95": "25s",
+      "n": 1,
+      "errorRate": "0.0% (0/1)",
+      "guardrail": "auto-abort, fault removed on the node fired 1/1"
+    },
+    {
+      "requestType": "Policy violation (storage over the ceiling)",
+      "baseline": "Manual Terraform PR with human review: hours to a day before merge and apply.",
+      "p50": "32 ms",
+      "p95": "32 ms",
+      "n": 1,
+      "errorRate": "0.0% (0/1)",
+      "guardrail": "policy denial fired 1/1"
+    },
+    {
+      "requestType": "Audit query (actor, time range)",
+      "baseline": "Manual compliance log reconstruction across disparate systems, commonly a multi-day effort at audit time.",
+      "p50": "10 ms",
+      "p95": "108 ms",
+      "n": 10,
+      "errorRate": "0.0% (0/10)",
+      "guardrail": null
+    }
+  ],
+  "scheduler": {
+    "cheaperPercent": 45.5,
+    "pluginLatencyClassViolations": 0,
+    "defaultSchedulerSpotPlacements": 4
+  },
+  "guardrails": {
+    "rollbackSeconds": 50,
+    "abortSeconds": 25,
+    "faultGoneAfterAbortSeconds": 1
+  },
+  "completeness": {
+    "auditRows": 201,
+    "wallClock": "23m13s",
+    "kafkaAcknowledged": 176,
+    "publishFailures": 0,
+    "chainIntact": true
+  }
+}
