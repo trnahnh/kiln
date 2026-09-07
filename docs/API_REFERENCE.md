@@ -211,7 +211,7 @@ Owned by the Scheduler plugin ([`SYSTEM_DESIGN.md#3`](SYSTEM_DESIGN.md#3-costgpu
 
 A node missing the contract is treated as on-demand at the highest known hourly cost. On EKS the `aws` price source derives the same facts from `eks.amazonaws.com/capacityType` or `karpenter.sh/capacity-type`, `node.kubernetes.io/instance-type`, zone and region.
 
-**Plugin arguments** (`KubeSchedulerConfiguration` `pluginConfig`, name `CostAware`): `weights.cost`, `weights.fragmentation`, `weights.preemption`, integers summing to 100; defaults 50/30/20.
+**Plugin arguments** (`KubeSchedulerConfiguration` `pluginConfig`, name `CostAware`): `weights.cost`, `weights.fragmentation`, `weights.preemption`, integers summing to 100; defaults 50/30/20. `audit.brokers` and `audit.topic` name where `SCHEDULE` events go; `tracing.endpoint` names the OTLP gRPC endpoint spans go to, empty for none. A pod carrying `platform.internal/traceparent` is scheduled as a span of that trace ([ADR-0021](decisions/0021-one-trace-per-request-via-cr-annotation-and-kafka-headers.md)).
 
 ## Audit event schema
 
@@ -251,6 +251,8 @@ Every subsystem publishes to the Kafka topic `kiln.audit` (one partition, record
 | `ROLLBACK` | Delivery controller | `outcome: RolledBack`, `reason`, `criterion`, `templateHash` |
 | `CHAOS_EXPERIMENT` | Chaos controller | `outcome: Started \| Completed \| Aborted`, `faultType`, `targets`, `resilienceScore`, `abortReason` |
 
+**Record headers** ([ADR-0021](decisions/0021-one-trace-per-request-via-cr-annotation-and-kafka-headers.md)): every record carries the publishing span as W3C `traceparent` and `tracestate` headers. The trace id is not part of the event body and is not hashed. The same trace is carried across the CR boundary by the annotation `platform.internal/traceparent`, stamped by `POST /v1/requests` on every CR it applies, copied by the standard composition to the `TenantDatabase`, and copied by the operator onto its pod template; a controller parents its spans on it when present.
+
 **Stored entry** (what `GET /v1/audit` returns): the wire event plus `seq`, `prevHash` and `hash`. The chain and the table are defined in [`DATA_MODEL.md`](DATA_MODEL.md). Verifying the chain means recomputing each entry's hash from its content plus `prevHash`, confirming it matches the stored `hash`, and confirming its `prevHash` equals the previous entry's `hash`.
 
 ## Audit/RBAC service REST endpoints
@@ -259,7 +261,7 @@ Roles are read from the JWT's `roles` claim (an array of strings).
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| `POST` | `/v1/requests` | Submit a `DatabaseClaim`, `CanaryRollout` or `ChaosExperiment` manifest (JSON body) on the caller's behalf: the service applies it, stamped `platform.internal/requested-by: <subject>`, and publishes `PROVISION_REQUEST`; an admission rejection publishes `POLICY_DENY` and returns `422` with `POLICY_DENIED` | Bearer JWT, `requests:submit` role |
+| `POST` | `/v1/requests` | Submit a `DatabaseClaim`, `CanaryRollout` or `ChaosExperiment` manifest (JSON body) on the caller's behalf: the service applies it, stamped `platform.internal/requested-by: <subject>` and `platform.internal/traceparent: <the request's W3C traceparent>`, and publishes `PROVISION_REQUEST`; an admission rejection publishes `POLICY_DENY` and returns `422` with `POLICY_DENIED` | Bearer JWT, `requests:submit` role |
 | `GET` | `/v1/audit?actor=&resource=&from=&to=&limit=` | Query the audit trail by actor, resource, and time range, ordered by `seq`; `limit` defaults to 100, at most 1000 | Bearer JWT, `audit:read` role |
 | `GET` | `/v1/audit/verify` | Full hash-chain verification pass; `{"ok": true, "entries": n}` or `{"ok": false, "code": "AUDIT_CHAIN_BROKEN", "brokenLinks": [{"seq", "eventId", "reason"}]}` | Bearer JWT, `audit:admin` role |
 | `GET` | `/healthz` | Liveness probe | None |
