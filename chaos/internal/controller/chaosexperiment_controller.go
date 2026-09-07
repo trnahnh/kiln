@@ -172,7 +172,7 @@ func (r *Reconciler) schedule(ctx context.Context, cr *platformv1.ChaosExperimen
 	}
 	r.setReady(cr, true, platformv1.ReasonRunning, "fault injection started")
 	r.event(cr, corev1.EventTypeNormal, platformv1.ReasonRunning, fmt.Sprintf("%s on %d pod(s) for %s", cr.Spec.FaultType, len(targets), cr.Spec.Duration.Duration))
-	r.publish(cr, map[string]any{"outcome": "Started", "faultType": string(cr.Spec.FaultType), "targets": len(targets)}, "Started", string(cr.UID))
+	r.publish(ctx, cr, time.Time{}, map[string]any{"outcome": "Started", "faultType": string(cr.Spec.FaultType), "targets": len(targets)}, "Started", string(cr.UID))
 	return ctrl.Result{RequeueAfter: interval}, nil
 }
 
@@ -252,11 +252,11 @@ func (r *Reconciler) stop(ctx context.Context, cr *platformv1.ChaosExperiment, p
 		zero := 0.0
 		cr.Status.ResilienceScore = &zero
 		r.event(cr, corev1.EventTypeWarning, platformv1.ReasonSLOBreach, fmt.Sprintf("aborted (%s): traffic-affecting faults reverted", reason))
-		r.publish(cr, map[string]any{"outcome": "Aborted", "abortReason": reason, "faultType": string(cr.Spec.FaultType), "resilienceScore": 0.0}, "Aborted", string(cr.UID))
+		r.publish(ctx, cr, experimentBegan(cr), map[string]any{"outcome": "Aborted", "abortReason": reason, "faultType": string(cr.Spec.FaultType), "resilienceScore": 0.0}, "Aborted", string(cr.UID))
 	} else {
 		cr.Status.CompletedAt = &now
 		r.event(cr, corev1.EventTypeNormal, platformv1.ReasonCompleted, fmt.Sprintf("completed, resilience score %.1f", score))
-		r.publish(cr, map[string]any{"outcome": "Completed", "resilienceScore": score, "faultType": string(cr.Spec.FaultType)}, "Completed", string(cr.UID))
+		r.publish(ctx, cr, experimentBegan(cr), map[string]any{"outcome": "Completed", "resilienceScore": score, "faultType": string(cr.Spec.FaultType)}, "Completed", string(cr.UID))
 	}
 	return r.settle(ctx, cr)
 }

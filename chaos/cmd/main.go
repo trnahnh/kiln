@@ -30,6 +30,7 @@ import (
 	"github.com/trnahnh/kiln/chaos/internal/controller"
 	"github.com/trnahnh/kiln/chaos/internal/fault"
 	"github.com/trnahnh/kiln/slo"
+	"github.com/trnahnh/kiln/tracing"
 )
 
 var (
@@ -53,8 +54,9 @@ func main() {
 		return
 	}
 
-	var mode, metricsAddr, probeAddr, prometheusURL, ledgerDir, auditBrokers, auditTopic string
+	var mode, metricsAddr, probeAddr, prometheusURL, ledgerDir, auditBrokers, auditTopic, otlpEndpoint string
 	flag.StringVar(&mode, "mode", "controller", "controller or agent")
+	flag.StringVar(&otlpEndpoint, "otlp-endpoint", "", "OTLP gRPC endpoint the controller exports spans to; empty disables tracing export.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to; 0 disables it.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the probe endpoint binds to.")
 	flag.StringVar(&prometheusURL, "prometheus-url", "http://prometheus.monitoring.svc:9090", "Prometheus base URL the SLO windows are read from.")
@@ -67,7 +69,7 @@ func main() {
 
 	switch mode {
 	case "controller":
-		runController(metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic)
+		runController(metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic, otlpEndpoint)
 	case "agent":
 		runAgent(metricsAddr, probeAddr, ledgerDir)
 	default:
@@ -76,8 +78,18 @@ func main() {
 	}
 }
 
-func runController(metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic string) {
+func runController(metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic, otlpEndpoint string) {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zap.Options{Development: true})))
+	stopTracing, err := tracing.Setup(context.Background(), "kiln-chaos-controller", otlpEndpoint)
+	if err != nil {
+		setupLog.Error(err, "failed to start tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = stopTracing(flush)
+	}()
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},

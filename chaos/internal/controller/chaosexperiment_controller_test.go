@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/tracing"
 	platformv1 "github.com/trnahnh/kiln/chaos/api/v1"
 	"github.com/trnahnh/kiln/slo"
 )
@@ -55,6 +56,19 @@ func auditEvent(ns, name, outcome string) audit.Event {
 	return audit.Event{}
 }
 
+// auditTraces maps each outcome published about one experiment to the trace it was
+// published under.
+func auditTraces(ns, name string) map[string]string {
+	out := map[string]string{}
+	events, traces := auditLog.Events(), auditLog.TraceIDs()
+	for i, e := range events {
+		if e.Resource == audit.ResourceRef("ChaosExperiment", ns, name) {
+			out[e.Details["outcome"].(string)] = traces[i]
+		}
+	}
+	return out
+}
+
 var _ = Describe("ChaosExperiment", func() {
 	It("rejects a target in another namespace", func() {
 		ns := freshNamespace()
@@ -80,7 +94,9 @@ var _ = Describe("ChaosExperiment", func() {
 		for _, n := range []string{"target-a", "target-b", "target-c", "target-d"} {
 			makePod(ns, n, "target", false)
 		}
-		Expect(k8sClient.Create(ctx, experiment(ns, "healthy", "latency-injection", 50, 0.05))).To(Succeed())
+		healthy := experiment(ns, "healthy", "latency-injection", 50, 0.05)
+		healthy.Annotations = map[string]string{tracing.AnnotationTraceParent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+		Expect(k8sClient.Create(ctx, healthy)).To(Succeed())
 
 		Eventually(func() []string { return injector.appliedPods(ns) }, timeout, tick).Should(HaveLen(2), "50% of four pods is two")
 
@@ -102,6 +118,10 @@ var _ = Describe("ChaosExperiment", func() {
 		completed := auditEvent(ns, "healthy", "Completed")
 		Expect(completed.Details["resilienceScore"]).To(Equal(*cr.Status.ResilienceScore))
 		Expect(completed.EventID).To(Equal(audit.DeterministicID(completed.Resource, audit.ActionChaosExperiment, "Completed", string(cr.UID))))
+		Expect(auditTraces(ns, "healthy")).To(And(
+			HaveKeyWithValue("Started", "4bf92f3577b34da6a3ce929d0e0e4736"),
+			HaveKeyWithValue("Completed", "4bf92f3577b34da6a3ce929d0e0e4736"),
+		), "both transitions are spans of the trace the experiment was requested under (ADR-0021)")
 	})
 
 	It("aborts on a forced SLO breach and the agent reverts within the lease", func() {
