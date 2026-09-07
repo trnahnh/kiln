@@ -30,7 +30,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: Spring Boot service, Kafka event stream, hash-chained log, RBAC enforcement. Also delivered here, pulled forward from Phase 7: every subsystem publishes to the audit stream, and the operator's in-cluster deployment through ArgoCD, because the exit criterion needs Phase 1 actions on the e2e cluster.
   Exit criterion: every action from Phases 1-5 is visible in the audit log; a tampered entry is detected on verification; a duplicate Kafka delivery does not duplicate an entry.
 
-- [ ] **Phase 7: Integration + validation**
+- [x] **Phase 7: Integration + validation**
   Scope: the end-to-end request flow through the REST path across the six already-deployed subsystems, with one OpenTelemetry trace spanning it (the cross-cutting section of [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md#cross-cutting-observability)); run the Validation Plan in [`METRICS.md`](METRICS.md#validation-plan).
   Exit criterion: the full synthetic case study completes and produces a before/after comparison table against the baselines in `METRICS.md`.
 
