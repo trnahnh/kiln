@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -70,15 +72,36 @@ func pickPods(cr *platformv1.ChaosExperiment, matching []corev1.Pod, allowed int
 	return matching
 }
 
-// workloadName is the Istio canonical service the SLO is read for: the pods' `app` label,
-// which Istio reports as destination_workload for a standard Deployment.
+// workloadName is what Istio reports as destination_workload for the targeted pods: the
+// owning Deployment's name for a ReplicaSet-managed pod (the ReplicaSet is named after it
+// with the pod-template-hash appended), otherwise the owner's name, otherwise the `app`
+// label. Phase 7 found the label alone wrong for a canary-managed service, whose serving
+// pods belong to `<name>-primary` while every pod is labelled `app=<name>`.
 func workloadName(cr *platformv1.ChaosExperiment, matching []corev1.Pod) string {
+	for i := range matching {
+		if w := ownerWorkload(&matching[i]); w != "" {
+			return w
+		}
+	}
 	for i := range matching {
 		if app := matching[i].Labels["app"]; app != "" {
 			return app
 		}
 	}
 	return ""
+}
+
+func ownerWorkload(p *corev1.Pod) string {
+	owner := metav1.GetControllerOf(p)
+	if owner == nil {
+		return ""
+	}
+	if owner.Kind == "ReplicaSet" {
+		if hash := p.Labels["pod-template-hash"]; hash != "" {
+			return strings.TrimSuffix(owner.Name, "-"+hash)
+		}
+	}
+	return owner.Name
 }
 
 func snapshot(s *platformv1.CounterSnapshot) slo.Counters {
