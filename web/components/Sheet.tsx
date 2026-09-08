@@ -25,17 +25,32 @@ export default function Sheet({ n, title, drawnBy, lede, children }: Props) {
       return;
     }
     el.dataset.reveal = "";
+    let done = false;
+    const reveal = () => {
+      if (done) return;
+      done = true;
+      el.dataset.reveal = "in";
+      io.disconnect();
+      window.removeEventListener("scroll", onScroll);
+    };
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting || e.boundingClientRect.bottom < 0)) {
-          el.dataset.reveal = "in";
-          io.disconnect();
-        }
+        if (entries.some((e) => e.isIntersecting || e.boundingClientRect.bottom < 0)) reveal();
       },
       { rootMargin: "0px 0px -10% 0px" },
     );
+    // Belt and braces: a sheet within a viewport and a half of the scroll position reveals
+    // on scroll too, so a missed observer callback can never leave one clipped.
+    const onScroll = () => {
+      if (el.getBoundingClientRect().top < window.innerHeight * 1.5) reveal();
+    };
     io.observe(el);
-    return () => io.disconnect();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => {
+      io.disconnect();
+      window.removeEventListener("scroll", onScroll);
+    };
   }, []);
 
   return (
