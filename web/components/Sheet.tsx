@@ -39,7 +39,7 @@ export default function Sheet({ n, title, drawnBy, lede, children }: Props) {
   }, []);
 
   return (
-    <section ref={ref} id={`sheet-${n}`} className="sheet mx-auto my-6 max-w-[80rem] md:my-10">
+    <section ref={ref} id={`sheet-${n}`} className="sheet mx-auto my-4 md:my-[1.5vw]">
       <div className="sheet-inner">
         <div className="sheet-body">
           <div className="md:grid md:grid-cols-12 md:gap-8">

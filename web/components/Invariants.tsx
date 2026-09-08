@@ -21,7 +21,7 @@ export default function Invariants({ bare = false }: { bare?: boolean }) {
 function InvariantsList() {
   return (
     <>
-      <ul className="mt-14 grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2">
+      <ul className="mt-14 grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2 2xl:grid-cols-3">
         {invariants.map((inv) => (
           <li key={inv.adr} className="border-t border-hairline pt-5">
             <p className="measure text-[15px] leading-relaxed text-fg">{inv.text}</p>

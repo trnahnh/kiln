@@ -5,14 +5,15 @@ import { caption, source } from "@/content/readouts";
 
 export const HERO_SLOT_ID = "hero-slot";
 
-// Sheet 1. The drawing lands in the slot at hand-off; the headline is a note on the sheet.
+// Sheet 1. On desktop it fills the rest of the first viewport under the header; the
+// drawing lands in the slot at hand-off and the headline is a note on the sheet.
 export default function HeroDraft() {
   return (
-    <section className="hero-copy relative z-[1] mx-auto w-full max-w-[80rem]">
-      <div className="sheet arrive mx-auto mt-4 md:mt-6" style={{ "--arrive-delay": "0ms" } as React.CSSProperties}>
-        <div className="sheet-inner">
-          <div className="relative">
-            <div className="relative h-[min(64svh,720px)] min-h-[360px] md:h-[min(78svh,900px)] md:min-h-[520px]">
+    <section className="hero-copy relative z-[1] mx-auto flex w-full flex-col md:min-h-0 md:flex-1">
+      <div className="sheet arrive mt-3 flex w-full flex-col md:mt-4 md:min-h-0 md:flex-1" style={{ "--arrive-delay": "0ms" } as React.CSSProperties}>
+        <div className="sheet-inner flex flex-col md:min-h-0 md:flex-1">
+          <div className="relative flex flex-col md:min-h-0 md:flex-1">
+            <div className="relative h-[min(64svh,720px)] min-h-[360px] md:h-auto md:min-h-0 md:flex-1">
               {/* The rest-fit rect: on desktop the right part of the sheet, leaving the note its corner. */}
               <div id={HERO_SLOT_ID} className="hero-slot absolute inset-x-[3%] bottom-[4%] top-[3%] md:left-[32%] md:right-[2%] md:bottom-[5%] md:top-[2%]">
                 {/* Shown when the scene cannot run; DraftScene hides it once the drawing is live. A plain
@@ -21,7 +22,7 @@ export default function HeroDraft() {
                 <img src="/draft/drawing.svg" alt="" width={1600} height={1000} decoding="async" />
               </div>
             </div>
-            <div className="hero-note relative mx-3 mb-3 md:absolute md:bottom-8 md:left-8 md:m-0 md:max-w-[30rem]">
+            <div className="hero-note relative mx-2 mb-2 md:absolute md:bottom-[5%] md:left-[2.5%] md:m-0 md:max-w-[30rem]">
               <h1 className="headline text-[2.6rem] md:text-[3.3rem]">
                 {site.headlineLines.map((line) => (
                   <span key={line} className="block">

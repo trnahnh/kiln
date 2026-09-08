@@ -3,7 +3,7 @@ import { source } from "@/content/readouts";
 
 export default function Footer() {
   return (
-    <footer className="mx-auto w-full max-w-6xl border-t border-hairline px-6 py-10 text-sm text-fg-faint md:px-8">
+    <footer className="mx-auto w-full border-t border-hairline px-4 py-8 text-sm text-fg-faint md:px-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-3">
         <p>
           <a href={REPO} className="text-fg-muted hover:text-fg">

@@ -16,10 +16,12 @@ export default function Page() {
   return (
     <>
       <link rel="preload" href="/draft/model.json" as="fetch" crossOrigin="anonymous" />
-      <div className="px-3 md:px-6">
-        <Header />
-        <main>
+      <div className="px-2 md:px-[2vw]">
+        <div className="md:flex md:h-svh md:flex-col md:pb-[1.5vw]">
+          <Header />
           <HeroDraft />
+        </div>
+        <main>
 
           <Sheet
             n={2}
@@ -36,8 +38,8 @@ export default function Page() {
             drawnBy="The platform's rules"
             lede="Not animations of the idea. The hash rule, the scoring rule and the blast-radius rule below are the platform's own, running in this page."
           >
-            <div className="mt-12 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-8">
-              <div className="lg:col-span-7">
+            <div className="mt-12 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-8 2xl:grid-cols-3 2xl:gap-10">
+              <div className="lg:col-span-7 2xl:col-span-1">
                 <h3 className="demo-title">Test sheet: break the audit chain</h3>
                 <p className="demo-lede">
                   Every row&apos;s hash covers its content and the previous row&apos;s hash. Change a field and the row fails
@@ -45,7 +47,7 @@ export default function Page() {
                 </p>
                 <HashChainDemo />
               </div>
-              <div className="space-y-10 lg:col-span-5">
+              <div className="space-y-10 lg:col-span-5 2xl:contents">
                 <div>
                   <h3 className="demo-title">Calc sheet: score a placement</h3>
                   <p className="demo-lede">

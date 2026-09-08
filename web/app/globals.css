@@ -49,8 +49,10 @@
   --font-mono: var(--font-mono);
 }
 
+/* Everything is set in rem, so the root size carries the page from a phone to a 1440p sheet. */
 html {
   background: var(--ground);
+  font-size: clamp(15px, 12.5px + 0.28vw, 20px);
 }
 
 body {
@@ -134,12 +136,18 @@ html.intro-pending .arrive {
 .sheet {
   position: relative;
   margin: 0 auto;
-  border: 1px solid var(--line-faint);
-  padding: 6px;
+  padding: 0;
 }
 
 .sheet-inner {
   border: 1.5px solid var(--line);
+}
+
+@media (min-width: 768px) {
+  .sheet {
+    border: 1px solid var(--line-faint);
+    padding: 6px;
+  }
 }
 
 .sheet-body {

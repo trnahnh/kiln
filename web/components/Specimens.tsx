@@ -51,7 +51,7 @@ export default function Specimens({ readouts }: Props) {
       </div>
 
       <div role="tabpanel" className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
-        <div className="lg:col-span-5">
+        <div className="lg:col-span-5 2xl:col-span-4">
           <h3 className="text-2xl font-semibold tracking-tight text-fg">{s.title}</h3>
           <p className="measure mt-3 text-base leading-relaxed text-fg-muted">{s.role}</p>
           <ul className="mt-6 flex flex-wrap gap-2">
@@ -86,7 +86,7 @@ export default function Specimens({ readouts }: Props) {
             </div>
           </div>
         </div>
-        <div className="lg:col-span-7">
+        <div className="lg:col-span-7 2xl:col-span-8">
           <CodePanel code={s.artifact.code} lang={s.artifact.lang} title={s.artifact.title} />
         </div>
       </div>
