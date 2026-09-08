@@ -3,6 +3,11 @@ name: ci
 on:
   push:
     branches: [main]
+    # The landing page has its own workflow (web.yaml); a push that only touches it must
+    # not start the platform pipeline and its hour of end-to-end tests.
+    paths-ignore:
+      - "web/**"
+      - ".github/workflows/web.yaml"
   schedule:
     - cron: "0 4 * * *"
 
@@ -31,29 +36,6 @@ jobs:
       - run: make test
         working-directory: scheduler-plugin
 
-  web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - name: metrics.json matches docs/METRICS.md
-        run: pnpm check:metrics
-      - name: drawing assets are committed
-        run: pnpm build:draft && git diff --exit-code -- public/draft
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
 
   scheduler-perf:
     runs-on: ubuntu-latest
