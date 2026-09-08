@@ -5,7 +5,9 @@ arrangement of the request flow that drafts itself in front of you (six wirefram
 drafted plane, dimensioned with the validation week's real numbers, checked against the CI run),
 and every section below is a numbered sheet with its own title block. Next.js App Router, React, Tailwind, TypeScript, no other
 runtime dependencies. Deployed from this folder (Vercel root directory `web/`), production
-from `origin/main`.
+from `origin/main`, live at https://kiln-idp.vercel.app. Its checks run in
+`.github/workflows/web.yaml` on pushes that touch `web/`, `docs/METRICS.md` or the workflow; the
+platform pipeline ignores web-only pushes.
 
 ## Run
 

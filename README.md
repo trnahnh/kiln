@@ -8,7 +8,7 @@ Without a platform layer, teams get infrastructure one of two ways: a ticket to 
 
 This platform replaces both paths with one: request through a CRD, get policy-checked, provisioned, scheduled, deployed, and logged automatically.
 
-Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md).
+Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md). The landing page, a drawing of the request flow dimensioned with the validation numbers, is at [kiln-idp.vercel.app](https://kiln-idp.vercel.app) and lives in [`web/`](web/README.md).
 
 ## What's in this repo
 
@@ -71,7 +71,7 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 ├── slo/                   # Go, shared Istio/Prometheus SLO metric reader
 ├── e2e/                   # Go, per-phase exit-criterion tests against the live cluster
 ├── hack/                  # Out-of-Git bootstrap: audit Secrets and the JWT key pair
-├── web/                   # Next.js landing page; deployed from this folder, numbers pulled from docs/METRICS.md
+├── web/                   # Landing page, live at https://kiln-idp.vercel.app; its numbers are pulled from docs/METRICS.md
 ├── docs/
 │   ├── SYSTEM_DESIGN.md
 │   ├── API_REFERENCE.md
