@@ -28,9 +28,15 @@ const TEXT_REF_SCALE = 72;
 const TEXT_PX = { label: 20, stack: 11, dimvalue: 24, dimlabel: 11 } as const;
 const TITLE_H = 84;
 const TITLE_W = 620;
-const TRACK_ZOOM = 1.5;
 const TRACK_LEAD = 0.06;
 const TRACK_EYE = 0.5;
+// On a portrait sheet a block is this fraction of the screen width during the shot and at
+// rest, capped so a portrait tablet does not get blocks the size of a hand.
+const TRACK_BLOCK = 0.52;
+const REST_BLOCK = 0.4;
+const BLOCK_CAP_PX = { track: 300, rest: 240 };
+const REST_MARGIN_PX = 28;
+const TOUCH_FLOOR_PX = { label: 13, dimvalue: 14 } as const;
 
 interface Props {
   slotId: string;
@@ -93,6 +99,7 @@ export default function DraftScene({ slotId }: Props) {
     let glowBlock = -1;
 
     const isPhone = () => window.matchMedia(PHONE).matches;
+    const isTouch = () => window.matchMedia("(pointer: coarse)").matches;
     const finePointer = () => window.matchMedia("(pointer: fine)").matches;
     const currentLayout = (): LayoutName => (isPhone() || window.innerWidth / window.innerHeight < 0.8 ? "portrait" : "landscape");
 
@@ -137,14 +144,38 @@ export default function DraftScene({ slotId }: Props) {
         w: w - inset * 2 - 48,
         h: h - inset * 2 - titleRoom - 48,
       }, 0.84);
-      // The tracking shot fits the drawing to the sheet's width, then zooms in; the camera's
-      // vertical position is chosen per frame from where the request is.
-      const byWidth = solveFit(base.bounds, { x: inset + 12, y: 0, w: w - inset * 2 - 24, h: 1e9 }, 0.9);
-      // Zoom in on a phone; a portrait tablet is wide enough that the fit is already large.
-      const zoom = Math.max(1, Math.min(TRACK_ZOOM, TRACK_ZOOM * Math.sqrt(393 / w)));
-      trackFit = { scale: byWidth.scale * zoom, offsetX: w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * byWidth.scale * zoom, offsetY: 0 };
-      restFit = solveFit(base.bounds, slotRect(), 0.96);
+      if (beats.tracking) {
+        // The tracking shot scales the drawing so a block is a fixed fraction of the screen
+        // width; the camera's vertical position is chosen per frame from where the request is.
+        const bw = blockWidth(base);
+        const trackScale = Math.min(TRACK_BLOCK * w, BLOCK_CAP_PX.track) / bw;
+        trackFit = { scale: trackScale, offsetX: w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * trackScale, offsetY: 0 };
+      }
+      restFit = computeRestFit();
       schedule();
+    };
+
+    const blockWidth = (d: Drawing) => {
+      const pts = d.prims.filter((p) => p.block === 1 && p.points).flatMap((p) => p.points!);
+      const xs = pts.map((p) => p[0]);
+      return Math.max(...xs) - Math.min(...xs) || 1;
+    };
+
+    // At rest a portrait sheet keeps a block at a fixed fraction of the width and grows the
+    // hero box to the height the drawing needs, so the page scrolls down the sheet to the
+    // note. Landscape sheets contain-fit the slot the page laid out.
+    const computeRestFit = (): Fit => {
+      if (!base) return { scale: 1, offsetX: 0, offsetY: 0 };
+      if (!beats.tracking) return solveFit(base.bounds, slotRect(), 0.96);
+      const scale = Math.min(REST_BLOCK * viewport.w, BLOCK_CAP_PX.rest) / blockWidth(base);
+      const box = document.getElementById(slotId)?.parentElement;
+      if (box) box.style.height = `${Math.round((base.bounds.maxY - base.bounds.minY) * scale + REST_MARGIN_PX * 2)}px`;
+      const r = slotRect();
+      return {
+        scale,
+        offsetX: r.x + r.w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * scale,
+        offsetY: r.y + (r.h - (base.bounds.maxY - base.bounds.minY) * scale) / 2 - base.bounds.minY * scale,
+      };
     };
 
     const currentTime = (now: number) => (skipAt !== null ? warpedTime(tAtSkip, (now - skipAt) / 1000, beats.done) : (now - start) / 1000);
@@ -155,7 +186,13 @@ export default function DraftScene({ slotId }: Props) {
       if (!beats.tracking) return mixFit(introFit, restFit, handoff);
       const f = Math.min(1, linear(beats.travelStart, beats.travelEnd, time) + TRACK_LEAD);
       const focus = pointAlong(drawing.travel, f);
-      const tracking: Fit = { ...trackFit, offsetY: viewport.h * TRACK_EYE - focus[1] * trackFit.scale };
+      // The camera follows the request on both axes, so the block being drafted is centred
+      // and its dimension text stays inside the sheet on narrow phones.
+      const tracking: Fit = {
+        scale: trackFit.scale,
+        offsetX: viewport.w / 2 - focus[0] * trackFit.scale,
+        offsetY: viewport.h * TRACK_EYE - focus[1] * trackFit.scale,
+      };
       const pull = smoothstep(beats.pullbackStart, beats.pullbackEnd, time);
       return mixFit(tracking, restFit, pull);
     };
@@ -173,6 +210,7 @@ export default function DraftScene({ slotId }: Props) {
       // Text does not scale with the projection, so it is sized from the fit instead, and the
       // small annotations drop out when the drawing is too small to carry them.
       const k = Math.max(0.5, Math.min(1.1, fit.scale / TEXT_REF_SCALE));
+      const touch = isTouch();
 
       for (const p of drawing.prims) {
         const el = svg.querySelector<SVGElement>(`[data-id="${p.id}"]`);
@@ -190,8 +228,10 @@ export default function DraftScene({ slotId }: Props) {
           const dy = p.kind === "label" ? -6 : p.kind === "stack" ? 4 : p.kind === "dimvalue" ? -14 : -2;
           el.setAttribute("x", x.toFixed(1));
           el.setAttribute("y", (y + dy * k).toFixed(1));
-          el.style.fontSize = (TEXT_PX[p.kind as keyof typeof TEXT_PX] * k).toFixed(1) + "px";
-          const tooSmall = k < 0.6 && (p.kind === "dimlabel" || p.kind === "stack");
+          const floor = touch ? (TOUCH_FLOOR_PX[p.kind as keyof typeof TOUCH_FLOOR_PX] ?? 0) : 0;
+          el.style.fontSize = Math.max(floor, TEXT_PX[p.kind as keyof typeof TEXT_PX] * k).toFixed(1) + "px";
+          const restingPortrait = beats.tracking && time >= beats.pullbackStart;
+          const tooSmall = (k < 0.6 && (p.kind === "dimlabel" || p.kind === "stack")) || (restingPortrait && p.kind === "stack");
           el.style.opacity = tooSmall ? "0" : progress.toFixed(3);
         }
       }
@@ -248,10 +288,17 @@ export default function DraftScene({ slotId }: Props) {
         }
         const tb = chrome.querySelector<SVGGElement>("[data-titleblock]");
         if (tb) {
-          const tw = Math.min(TITLE_W, viewport.w - inset * 2);
+          const tw = beats.tracking ? viewport.w - inset * 2 : Math.min(TITLE_W, viewport.w - inset * 2);
           tb.setAttribute("transform", `translate(${viewport.w - inset - tw} ${viewport.h - inset - TITLE_H})`);
           tb.querySelector<SVGRectElement>("[data-tbrect]")?.setAttribute("width", String(tw));
           tb.querySelector<SVGLineElement>("[data-tbmid]")?.setAttribute("x2", String(tw));
+          const split = beats.tracking ? Math.round(tw * 0.42) : 150;
+          const col = tb.querySelector<SVGLineElement>("[data-tbcol]");
+          col?.setAttribute("x1", String(split));
+          col?.setAttribute("x2", String(split));
+          tb.querySelectorAll<SVGTextElement>("[data-tbright]").forEach((t) => t.setAttribute("x", String(split + 12)));
+          tb.querySelectorAll<SVGTextElement>("[data-tbwide]").forEach((t) => (t.style.display = beats.tracking ? "none" : ""));
+          tb.querySelectorAll<SVGTextElement>("[data-tbphone]").forEach((t) => (t.style.display = beats.tracking ? "" : "none"));
           tb.style.opacity = smoothstep(beats.borderStart + 0.2, beats.borderEnd + 0.3, time).toFixed(3);
           const stamp = chrome.querySelector<SVGGElement>("[data-stamp]");
           if (stamp) {
@@ -297,7 +344,7 @@ export default function DraftScene({ slotId }: Props) {
             released = true;
             releaseArrivals();
             // The page has laid out by now; measure the slot again so the drawing lands exactly.
-            restFit = base ? solveFit(base.bounds, slotRect(), 0.96) : restFit;
+            restFit = computeRestFit();
           }
           backdrop.style.opacity = (1 - smoothstep(beats.handoffStart, beats.handoffEnd, t)).toFixed(3);
           if (hintRef.current) {
@@ -543,17 +590,23 @@ export default function DraftScene({ slotId }: Props) {
           <g data-titleblock style={{ opacity: 0 }}>
             <rect data-tbrect x="0" y="0" height={TITLE_H} fill="var(--ground)" stroke="var(--line)" strokeWidth="1.5" />
             <line data-tbmid x1="0" y1={TITLE_H / 2} x2="0" y2={TITLE_H / 2} stroke="var(--line)" />
-            <line x1="150" y1="0" x2="150" y2={TITLE_H} stroke="var(--line)" />
+            <line data-tbcol x1="150" y1="0" x2="150" y2={TITLE_H} stroke="var(--line)" />
             <text x="12" y="17" className="tb-svg-k">PROJECT</text>
             <text x="12" y="36" className="tb-svg-v tb-svg-big">KILN</text>
-            <text x="162" y="17" className="tb-svg-k">TITLE</text>
-            <text x="162" y="36" className="tb-svg-v">{model ? `${model.title}, ${model.subtitle}` : ""}</text>
-            <text x="12" y={TITLE_H / 2 + 17} className="tb-svg-k">SHEET</text>
-            <text x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">1 OF 6</text>
-            <text x="162" y={TITLE_H / 2 + 17} className="tb-svg-k">REV</text>
-            <text x="162" y={TITLE_H / 2 + 36} className="tb-svg-v">{model?.rev ?? ""}</text>
-            <text x="300" y={TITLE_H / 2 + 17} className="tb-svg-k">CHECKED</text>
-            <text x="300" y={TITLE_H / 2 + 36} className="tb-svg-v tb-svg-accent">{model?.checked ?? ""}</text>
+            <text data-tbright data-tbwide x="162" y="17" className="tb-svg-k">TITLE</text>
+            <text data-tbright data-tbwide x="162" y="36" className="tb-svg-v">{model ? `${model.title}, ${model.subtitle}` : ""}</text>
+            <text data-tbright data-tbphone x="162" y="17" className="tb-svg-k">SHEET</text>
+            <text data-tbright data-tbphone x="162" y="36" className="tb-svg-v">1 OF 6</text>
+            <text data-tbwide x="12" y={TITLE_H / 2 + 17} className="tb-svg-k">SHEET</text>
+            <text data-tbwide x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">1 OF 6</text>
+            <text data-tbphone x="12" y={TITLE_H / 2 + 17} className="tb-svg-k">REV</text>
+            <text data-tbphone x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">{model?.rev ?? ""}</text>
+            <text data-tbright data-tbwide x="162" y={TITLE_H / 2 + 17} className="tb-svg-k">REV</text>
+            <text data-tbright data-tbwide x="162" y={TITLE_H / 2 + 36} className="tb-svg-v">{model?.rev ?? ""}</text>
+            <text data-tbwide x="300" y={TITLE_H / 2 + 17} className="tb-svg-k">CHECKED</text>
+            <text data-tbwide x="300" y={TITLE_H / 2 + 36} className="tb-svg-v tb-svg-accent">{model?.checked ?? ""}</text>
+            <text data-tbright data-tbphone x="162" y={TITLE_H / 2 + 17} className="tb-svg-k">CHECKED</text>
+            <text data-tbright data-tbphone x="162" y={TITLE_H / 2 + 36} className="tb-svg-v tb-svg-accent">{model?.checked ?? ""}</text>
           </g>
           <g data-stamp style={{ opacity: 0 }}>
             <rect x="-62" y="-20" width="124" height="40" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
