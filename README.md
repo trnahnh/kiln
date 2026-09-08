@@ -71,6 +71,7 @@ Full design rationale and the hard problem each one solves: [`docs/SYSTEM_DESIGN
 ├── slo/                   # Go, shared Istio/Prometheus SLO metric reader
 ├── e2e/                   # Go, per-phase exit-criterion tests against the live cluster
 ├── hack/                  # Out-of-Git bootstrap: audit Secrets and the JWT key pair
+├── web/                   # Next.js landing page; deployed from this folder, numbers pulled from docs/METRICS.md
 ├── docs/
 │   ├── SYSTEM_DESIGN.md
 │   ├── API_REFERENCE.md

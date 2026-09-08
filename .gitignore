@@ -28,3 +28,8 @@ hack/keys/
 
 # Phase 7 simulation output, uploaded as a CI artifact
 validation-results.md
+
+# Landing-page filming output and local server logs (web/scripts)
+.film/
+.web-*.log
+.pnpm-install.log

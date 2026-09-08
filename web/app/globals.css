@@ -1,0 +1,949 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --ground: #123566;
+  --ground-deep: #0b2244;
+  --line: #eaf0fa;
+  --line-strong: #ffffff;
+  --line-faint: rgba(234, 240, 250, 0.32);
+  --line-hair: rgba(234, 240, 250, 0.16);
+  --accent: #ff7a1a;
+  --accent-soft: rgba(255, 122, 26, 0.16);
+  --text: #eaf0fa;
+  --text-muted: rgba(234, 240, 250, 0.74);
+  --text-faint: rgba(234, 240, 250, 0.52);
+  --scene-ink: #123566;
+  --font-display: var(--font-big-shoulders), "Archivo Narrow", "Arial Narrow", sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: var(--font-archivo), "Archivo", system-ui, sans-serif;
+
+  /* Names the v2 components still use; all resolve into the cyanotype tokens above. */
+  --ink: var(--ground);
+  --hairline: var(--line-hair);
+  --hairline-strong: var(--line-faint);
+  --facet-highlight: var(--line-strong);
+  --facet-deep: var(--ground-deep);
+  --facet-shadow: var(--ground-deep);
+  --alarm: var(--accent);
+}
+
+@theme inline {
+  --color-ink: var(--ground);
+  --color-ground: var(--ground);
+  --color-ground-deep: var(--ground-deep);
+  --color-fg: var(--text);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-line: var(--line);
+  --color-line-faint: var(--line-faint);
+  --color-line-hair: var(--line-hair);
+  --color-accent: var(--accent);
+  --color-hairline: var(--line-hair);
+  --color-hairline-strong: var(--line-faint);
+  --color-facet-deep: var(--ground-deep);
+  --color-facet-highlight: var(--line-strong);
+  --color-alarm: var(--accent);
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+/* Everything is set in rem, so the root size carries the page from a phone to a 1440p sheet. */
+html {
+  background: var(--ground);
+  font-size: clamp(15px, 12.5px + 0.28vw, 20px);
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Print texture: one static grain field and darkened edges, generated once, never animated. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1999;
+  pointer-events: none;
+  box-shadow: inset 0 0 160px rgba(5, 18, 40, 0.7);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  pointer-events: none;
+  opacity: 0.055;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='260' height='260' filter='url(%23g)'/></svg>");
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--ground-deep);
+}
+
+.measure {
+  max-width: 62ch;
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.arrive {
+  opacity: 0;
+  animation: arrive 600ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: var(--arrive-delay, 0ms);
+}
+
+/* The inline gate script in app/layout.tsx adds intro-pending before first paint; the
+   hero releases it as the hand-off begins, so the arrivals play once, after the drawing. */
+html.intro-pending .arrive {
+  animation-play-state: paused;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sheets */
+.sheet {
+  position: relative;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.sheet-inner {
+  border: 1.5px solid var(--line);
+}
+
+@media (min-width: 768px) {
+  .sheet {
+    border: 1px solid var(--line-faint);
+    padding: 6px;
+  }
+}
+
+.sheet-body {
+  padding: 1.5rem 1.25rem 2rem;
+}
+
+@media (min-width: 768px) {
+  .sheet-body {
+    padding: 2.5rem 2.5rem 3rem;
+  }
+}
+
+.sheet[data-reveal] .sheet-inner {
+  clip-path: inset(0 100% 0 0);
+}
+
+.sheet[data-reveal="in"] .sheet-inner {
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 700ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.title-block {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1.5px solid var(--line);
+}
+
+@media (min-width: 768px) {
+  .title-block {
+    grid-template-columns: 1.4fr 2fr 0.9fr 1fr 1.4fr;
+  }
+}
+
+.tb-cell {
+  padding: 0.55rem 0.8rem 0.65rem;
+  border-right: 1px solid var(--line-faint);
+  border-bottom: 1px solid var(--line-faint);
+  min-width: 0;
+}
+
+.tb-cell:nth-child(2n) {
+  border-right: 0;
+}
+
+@media (min-width: 768px) {
+  .tb-cell {
+    border-bottom: 0;
+  }
+  .tb-cell:nth-child(2n) {
+    border-right: 1px solid var(--line-faint);
+  }
+  .tb-cell:last-child {
+    border-right: 0;
+  }
+}
+
+.tb-k {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.tb-v {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-v.accent {
+  color: var(--accent);
+}
+
+.tb-nav {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  transition: color 160ms ease;
+}
+
+.tb-nav:hover {
+  color: var(--accent);
+}
+
+.sheet-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2.25rem;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+
+@media (min-width: 768px) {
+  .sheet-title {
+    font-size: 3rem;
+  }
+}
+
+.sheet-lede {
+  max-width: 62ch;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  letter-spacing: 0.03em;
+  line-height: 1.05;
+  color: var(--text);
+}
+
+.header-block {
+  border-bottom: 1.5px solid var(--line);
+}
+
+/* The drawing stage */
+.hero-stage {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100lvh;
+  z-index: 1000;
+  pointer-events: none;
+  contain: layout;
+}
+
+.hero-stage[data-phase="intro"] {
+  pointer-events: auto;
+}
+
+.hero-stage[data-phase="rest"],
+.hero-stage[data-phase="static"] {
+  position: absolute;
+  z-index: 0;
+}
+
+.hero-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 120%;
+  background: var(--scene-ink);
+}
+
+.draft-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.draft-svg text {
+  font-family: var(--font-display);
+  fill: var(--line);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.draft-svg .dr-label {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.draft-svg .dr-stack {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.draft-svg .dr-value {
+  font-size: 24px;
+  font-weight: 700;
+  fill: var(--accent);
+}
+
+.draft-svg .dr-measure {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--accent);
+  opacity: 0.9;
+}
+
+.draft-svg .dr-hit {
+  pointer-events: auto;
+  cursor: pointer;
+  fill: transparent;
+}
+
+.draft-svg [data-block][data-glow="1"] .dr-label {
+  fill: var(--accent);
+}
+
+.draft-svg .tb-svg-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  fill: var(--text-faint);
+  text-anchor: start;
+}
+
+.draft-svg .tb-svg-v {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-anchor: start;
+}
+
+.draft-svg .tb-svg-big {
+  font-size: 24px;
+}
+
+.draft-svg .tb-svg-accent {
+  fill: var(--accent);
+}
+
+.draft-svg .dr-stamp {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  fill: var(--accent);
+}
+
+.hero-hint {
+  position: fixed;
+  left: 50%;
+  top: calc(100svh - 2.75rem);
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+@media (max-height: 519px), (max-width: 639px) {
+  .hero-hint {
+    display: none;
+  }
+}
+
+.hero-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.hero-slot[data-live] img {
+  visibility: hidden;
+}
+
+.hero-copy {
+  pointer-events: none;
+}
+
+.hero-copy a,
+.hero-copy button {
+  pointer-events: auto;
+}
+
+.hero-note {
+  position: relative;
+  margin: 0 0.5rem 0.5rem;
+  border: 1.5px solid var(--line);
+  background: rgba(18, 53, 102, 0.88);
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.hero-box {
+  position: relative;
+  height: min(64svh, 720px);
+  min-height: 360px;
+}
+
+.hero-slot {
+  position: absolute;
+  inset: 3% 3% 4%;
+}
+
+/* The first screen: on a real desktop viewport the header and sheet 1 fill it exactly and the
+   headline is a note in the sheet's corner. Short or portrait viewports (phones, landscape
+   phones, portrait tablets) stack the note under the drawing instead. */
+@media (min-width: 768px) and (min-height: 520px) and (min-aspect-ratio: 4/5) {
+  .first-screen {
+    display: flex;
+    flex-direction: column;
+    height: 100svh;
+    padding-bottom: 1.5vw;
+  }
+  .fill {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .hero-box {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+  }
+  .hero-slot {
+    inset: 2% 2% 5% 32%;
+  }
+  .hero-note {
+    position: absolute;
+    left: 2.5%;
+    bottom: 5%;
+    margin: 0;
+    max-width: 30rem;
+  }
+}
+
+.sched-row > p {
+  grid-column: 1 / -1;
+}
+
+.headline {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 0.95;
+  color: var(--text);
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.6rem 1rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.0625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ground-deep);
+  background: var(--line);
+  transition: background-color 160ms ease;
+}
+
+.btn:hover {
+  background: var(--accent);
+}
+
+.link {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-decoration-color: var(--line-faint);
+  text-underline-offset: 4px;
+  transition: color 160ms ease;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+/* Readout band */
+.band {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1.5px solid var(--line);
+}
+
+.band-cell {
+  padding: 0.9rem 1rem;
+  border-right: 1px solid var(--line-faint);
+  border-bottom: 1px solid var(--line-faint);
+  transition: background-color 200ms ease;
+}
+
+.band-cell:hover {
+  background: var(--accent-soft);
+}
+
+.band-cell:nth-child(2n) {
+  border-right: 0;
+}
+
+.band-cell:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+@media (min-width: 768px) {
+  .band {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .band-cell:nth-child(2n) {
+    border-right: 1px solid var(--line-faint);
+  }
+  .band-cell:nth-child(3n) {
+    border-right: 0;
+  }
+  .band-cell:nth-last-child(-n + 3) {
+    border-bottom: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .band {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .band-cell {
+    border-bottom: 0;
+  }
+  .band-cell:nth-child(3n) {
+    border-right: 1px solid var(--line-faint);
+  }
+  .band-cell:last-child {
+    border-right: 0;
+  }
+}
+
+.band-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/* Tabs, chips, panels, code */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line-faint);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.tab:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.tab[aria-selected="true"],
+.tab[aria-pressed="true"] {
+  color: var(--ground-deep);
+  border-color: var(--line);
+  background: var(--line);
+}
+
+.tab-glyph {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--accent);
+}
+
+.chip {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line-faint);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.panel,
+.demo {
+  border: 1px solid var(--line-faint);
+  background: rgba(11, 34, 68, 0.55);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+@media (min-width: 768px) {
+  .code {
+    font-size: 0.8125rem;
+  }
+}
+
+.code-k {
+  color: var(--text-muted);
+}
+.code-v {
+  color: var(--accent);
+}
+.code-n {
+  color: var(--text);
+}
+.code-c,
+.code-p {
+  color: var(--text-faint);
+}
+
+.demo-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.demo-lede {
+  margin-top: 0.4rem;
+  margin-bottom: 1rem;
+  max-width: 62ch;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.demo input:not([type]) {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-faint);
+  padding: 0.2rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.demo input:not([type]):focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+.range {
+  accent-color: var(--accent);
+}
+
+.chain-row {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  transition: background-color 200ms ease;
+}
+
+.chain-row-bad {
+  background: var(--accent-soft);
+}
+
+.chain-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  min-width: 0;
+}
+
+.chain-meta > span:first-child {
+  white-space: nowrap;
+}
+
+.chain-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem 1rem;
+}
+
+.chain-field span {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+}
+
+.chain-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  accent-color: var(--accent);
+}
+
+.chain-hashes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.chain-hashes code {
+  color: var(--text);
+}
+
+.chain-reason {
+  grid-column: 1 / -1;
+  color: var(--accent);
+}
+
+@media (min-width: 640px) {
+  .chain-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .chain-meta {
+    grid-column: 1 / -1;
+  }
+  .chain-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .chain-toggle {
+    grid-column: 1 / -1;
+  }
+}
+
+.text-alarm {
+  color: var(--accent);
+}
+
+.sched-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem 1rem;
+  padding: 0.8rem 1rem;
+  align-items: start;
+}
+
+.sched-row-out {
+  opacity: 0.5;
+}
+
+.sched-row-won {
+  background: var(--accent-soft);
+}
+
+.sched-node {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8125rem;
+}
+
+.sched-terms {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.sched-term {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 2.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.sched-bar {
+  height: 4px;
+  background: var(--line-hair);
+  overflow: hidden;
+}
+
+.sched-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms ease;
+}
+
+.sched-score {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.5rem;
+  color: var(--text-muted);
+}
+
+.pod {
+  width: 1.375rem;
+  height: 1.375rem;
+  border: 1px solid var(--line-faint);
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease;
+}
+
+/* A faulted pod is hatched at 45 degrees, the drawing convention for a section cut. */
+.pod-faulted {
+  border-color: var(--accent);
+  background: repeating-linear-gradient(45deg, var(--accent) 0 2px, transparent 2px 6px);
+}
+
+.svg-tick {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--text-faint);
+}
+
+.svg-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  fill: var(--accent);
+}
+
+table.validation {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+table.validation th,
+table.validation td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.75rem 1rem 0.75rem 0;
+  border-bottom: 1px solid var(--line-hair);
+}
+
+table.validation th {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+table.validation td.num {
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--accent);
+}
+
+@media (max-width: 767px) {
+  table.validation,
+  table.validation tbody,
+  table.validation tr,
+  table.validation td {
+    display: block;
+  }
+  table.validation thead {
+    display: none;
+  }
+  table.validation tr {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid var(--line-hair);
+  }
+  table.validation td {
+    display: grid;
+    grid-template-columns: 6rem 1fr;
+    gap: 0.75rem;
+    padding: 0.2rem 0;
+    border: 0;
+    max-width: none;
+  }
+  table.validation td::before {
+    content: attr(data-label);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+    padding-top: 0.2rem;
+  }
+  table.validation td:empty {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrive {
+    animation: none;
+    opacity: 1;
+  }
+  .sheet[data-reveal] .sheet-inner {
+    clip-path: none;
+    transition: none;
+  }
+}
