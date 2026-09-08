@@ -328,10 +328,25 @@ func (h *harness) pushBranch(branch string, files map[string]*unstructured.Unstr
 		h.g.Expect(err).NotTo(HaveOccurred())
 		blobs[path] = h.git(strings.NewReader(yamlBytes), "hash-object", "-w", "--stdin")
 	}
-	root := h.mktree(blobs, "")
+	root := h.withWebTree(h.mktree(blobs, ""))
 	commit := h.git(nil, "-c", "user.name=kiln-e2e", "-c", "user.email=e2e@kiln.invalid",
 		"commit-tree", root, "-m", "e2e "+h.runID)
 	h.git(nil, "push", "origin", commit+":refs/heads/"+branch)
+}
+
+// withWebTree grafts the checked-out commit's web/ tree onto the synthetic root. Vercel
+// builds the site from web/ on every branch push, and only a vercel.json inside that
+// directory can tell it to skip e2e/* branches instead of failing on a missing root.
+func (h *harness) withWebTree(root string) string {
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD:web")
+	cmd.Dir = repoRoot()
+	out, err := cmd.Output()
+	if err != nil {
+		return root
+	}
+	entries := h.git(nil, "ls-tree", root)
+	entries += fmt.Sprintf("\n040000 tree %s\tweb", strings.TrimSpace(string(out)))
+	return h.git(strings.NewReader(entries+"\n"), "mktree")
 }
 
 // mktree builds nested git trees from path -> blob without touching the working tree.
