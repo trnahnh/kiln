@@ -181,9 +181,9 @@ export default function DraftScene({ slotId }: Props) {
     const currentTime = (now: number) => (skipAt !== null ? warpedTime(tAtSkip, (now - skipAt) / 1000, beats.done) : (now - start) / 1000);
 
     const cameraFit = (time: number, drawing: Drawing): Fit => {
-      if (!introFit || !restFit || !trackFit) return { scale: 1, offsetX: 0, offsetY: 0 };
+      if (!introFit || !restFit) return { scale: 1, offsetX: 0, offsetY: 0 };
       const handoff = smoothstep(beats.handoffStart, beats.handoffEnd, time);
-      if (!beats.tracking) return mixFit(introFit, restFit, handoff);
+      if (!beats.tracking || !trackFit) return mixFit(introFit, restFit, handoff);
       const f = Math.min(1, linear(beats.travelStart, beats.travelEnd, time) + TRACK_LEAD);
       const focus = pointAlong(drawing.travel, f);
       // The camera follows the request on both axes, so the block being drafted is centred
