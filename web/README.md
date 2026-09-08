@@ -50,6 +50,10 @@ detection and the contain-fit (`project.ts`), every primitive with its draw-in w
 (`components/DraftScene.tsx`) projects the model each frame into inline SVG, so the drawing
 draws itself in with stroke animation, orbits under the pointer, and stays crisp at any DPR
 without WebGL. Text is sized from the fit scale so the small rest and phone drawings stay legible.
+On phones the intro is a tracking shot: the camera follows the request point down the column and
+every block's beats are derived from when the request reaches it (`portraitBeats`), then the view
+pulls back to the rest fit. The page is fluid: the root font size scales with the viewport and the
+sheets span it, so a 1440p screen gets a 1440p sheet.
 
 ## The earlier hero
 
