@@ -8,6 +8,9 @@ on:
     paths-ignore:
       - "web/**"
       - ".github/workflows/web.yaml"
+      - "docs/**"
+      - "README.md"
+      - "LICENSE"
   schedule:
     - cron: "0 4 * * *"
 
