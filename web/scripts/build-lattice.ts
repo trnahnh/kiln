@@ -1,7 +1,7 @@
 // Builds the hero's committed assets from a seed: public/hero/lattice.json (the
 // parametric lattice the client expands into vertex buffers) and public/hero/lattice.svg
 // (the static fallback, same geometry and camera). Run with `pnpm build:lattice`.
-import { mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildLattice } from "../lib/hero/build.ts";
 import { renderSvg, type SvgPalette } from "../lib/hero/svg.ts";
@@ -11,20 +11,8 @@ const root = resolve(import.meta.dirname, "..");
 const SEED = 7;
 const SATELLITES = 12;
 
-function paletteFromCss(): SvgPalette {
-  const css = readFileSync(resolve(root, "app/globals.css"), "utf8");
-  const read = (name: string): string => {
-    const m = css.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`));
-    if (!m) throw new Error(`app/globals.css does not define --${name}`);
-    return m[1];
-  };
-  return {
-    shadow: read("facet-shadow"),
-    deep: read("facet-deep"),
-    accent: read("facet-accent"),
-    highlight: read("facet-highlight"),
-  };
-}
+// The unmounted amethyst hero's own tones; the live stylesheet no longer carries them.
+const PALETTE: SvgPalette = { shadow: "#1a0f2b", deep: "#3b1f5c", accent: "#8b5cf6", highlight: "#c4b5fd" };
 
 const params = buildLattice({ seed: SEED, satellites: SATELLITES });
 const outDir = resolve(root, "public/hero");
@@ -33,7 +21,7 @@ mkdirSync(outDir, { recursive: true });
 const jsonPath = resolve(outDir, "lattice.json");
 writeFileSync(jsonPath, JSON.stringify(params) + "\n");
 const svgPath = resolve(outDir, "lattice.svg");
-writeFileSync(svgPath, renderSvg(params, paletteFromCss()));
+writeFileSync(svgPath, renderSvg(params, PALETTE));
 
 const full = buildMesh(params, { maxTier: 2 });
 const phone = buildMesh(params, { maxTier: 1 });

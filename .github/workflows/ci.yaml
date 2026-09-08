@@ -49,8 +49,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: metrics.json matches docs/METRICS.md
         run: pnpm check:metrics
-      - name: lattice assets are committed
-        run: pnpm build:lattice && pnpm build:draft && git diff --exit-code -- public/hero public/draft
+      - name: drawing assets are committed
+        run: pnpm build:draft && git diff --exit-code -- public/draft
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
