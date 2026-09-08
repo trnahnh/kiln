@@ -1,6 +1,6 @@
-import { box, route, type DraftModel, type Vec2, type Vec3 } from "./model.ts";
+import { box, route, polylineLength, type DraftModel, type Vec2, type Vec3 } from "./model.ts";
 import { project, faceVisible, bounds, type Camera, type Bounds } from "./project.ts";
-import { DT, blockWindow, dimWindow } from "./timeline.ts";
+import { landscapeBeats, portraitBeats, EDGE_STAGGER, type Beats } from "./timeline.ts";
 
 export type PrimKind = "grid" | "edge" | "hidden" | "pipe" | "dim" | "dimvalue" | "dimlabel" | "label" | "stack";
 
@@ -18,11 +18,12 @@ export interface Prim {
 export interface Drawing {
   prims: Prim[];
   travel: Vec2[];
+  blockFractions: number[];
+  beats: Beats;
   bounds: Bounds;
   blockCentres: Vec2[];
 }
 
-const EDGE_STAGGER = 0.02;
 const DIM_RISE = 1.15;
 const GRID_PAD = 0.9;
 const PORTRAIT_BAND = 3.4;
@@ -33,9 +34,26 @@ const PORTRAIT_BAND = 3.4;
 export function layoutDrawing(model: DraftModel, layoutName: "landscape" | "portrait", cam: Camera): Drawing {
   const layout = model.layouts[layoutName];
   const { w, d, h } = layout.block;
-  const prims: Prim[] = [];
   const P = (p: Vec3) => project(p, cam);
 
+  // The request's path first, because the portrait beats hang off it.
+  const travel: Vec2[] = [];
+  const pipes: Vec2[][] = [];
+  const centreIndex: number[] = [];
+  for (let i = 0; i < model.blocks.length; i++) {
+    const [x, z] = layout.positions[i];
+    centreIndex.push(travel.length);
+    travel.push(P([x, h / 2, z]));
+    if (i === model.blocks.length - 1) break;
+    const pts = route(layout.positions[i], layout.positions[i + 1], w, d).map((p): Vec3 => [p[0], h / 2, p[2]]);
+    pipes.push(pts.map(P));
+    for (const p of pts) travel.push(P(p));
+  }
+  const total = polylineLength(travel);
+  const blockFractions = centreIndex.map((idx) => polylineLength(travel.slice(0, idx + 1)) / total);
+  const beats = layoutName === "portrait" ? portraitBeats(blockFractions) : landscapeBeats();
+
+  const prims: Prim[] = [];
   const xs = layout.positions.map((p) => p[0]);
   const zs = layout.positions.map((p) => p[1]);
   const gx0 = Math.floor(Math.min(...xs) - w / 2 - GRID_PAD);
@@ -48,19 +66,19 @@ export function layoutDrawing(model: DraftModel, layoutName: "landscape" | "port
   for (let x = gx0; x <= gx1; x++) {
     const z0 = Math.max(gz0, x - band);
     const z1 = Math.min(gz1, x + band);
-    if (z1 > z0) prims.push({ id: `gx${x}`, kind: "grid", points: [P([x, 0, z0]), P([x, 0, z1])], t0: DT.gridStart, t1: DT.gridEnd, block: -1 });
+    if (z1 > z0) prims.push({ id: `gx${x}`, kind: "grid", points: [P([x, 0, z0]), P([x, 0, z1])], t0: beats.gridStart, t1: beats.gridEnd, block: -1 });
   }
   for (let z = gz0; z <= gz1; z++) {
     const x0 = Math.max(gx0, z - band);
     const x1 = Math.min(gx1, z + band);
-    if (x1 > x0) prims.push({ id: `gz${z}`, kind: "grid", points: [P([x0, 0, z]), P([x1, 0, z])], t0: DT.gridStart, t1: DT.gridEnd, block: -1 });
+    if (x1 > x0) prims.push({ id: `gz${z}`, kind: "grid", points: [P([x0, 0, z]), P([x1, 0, z])], t0: beats.gridStart, t1: beats.gridEnd, block: -1 });
   }
 
   const centres: Vec2[] = [];
   model.blocks.forEach((b, i) => {
     const [x, z] = layout.positions[i];
     const bx = box([x, 0, z], [w, h, d]);
-    const [t0, t1] = blockWindow(i);
+    const [t0, t1] = beats.block(i);
     bx.edges.forEach((e, k) => {
       const visible = e.faces.some((f) => faceVisible(bx.faceNormals[f], cam));
       prims.push({
@@ -74,10 +92,10 @@ export function layoutDrawing(model: DraftModel, layoutName: "landscape" | "port
     });
     const top: Vec3 = [x, h, z];
     centres.push(P(top));
-    prims.push({ id: `b${i}label`, kind: "label", text: b.label, at: P(top), t0: t1, t1: t1 + DT.labelLag, block: i });
-    prims.push({ id: `b${i}stack`, kind: "stack", text: b.stack, at: P([x, h / 2, z + d / 2]), t0: t1 + 0.1, t1: t1 + DT.labelLag + 0.1, block: i });
+    prims.push({ id: `b${i}label`, kind: "label", text: b.label, at: P(top), t0: t1, t1: t1 + beats.labelLag, block: i });
+    prims.push({ id: `b${i}stack`, kind: "stack", text: b.stack, at: P([x, h / 2, z + d / 2]), t0: t1 + 0.1, t1: t1 + beats.labelLag + 0.1, block: i });
 
-    const [d0, d1] = dimWindow(i);
+    const [d0, d1] = beats.dim(i);
     const c0: Vec3 = [x - w / 2, h, z + d / 2];
     const c1: Vec3 = [x + w / 2, h, z + d / 2];
     const e0: Vec3 = [c0[0], h + DIM_RISE, c0[2]];
@@ -93,23 +111,10 @@ export function layoutDrawing(model: DraftModel, layoutName: "landscape" | "port
     prims.push({ id: `d${i}measure`, kind: "dimlabel", text: b.measure, at: P(mid), t0: d1 + 0.05, t1: d1 + 0.25, block: i });
   });
 
-  const travel: Vec2[] = [];
-  for (let i = 0; i < model.blocks.length; i++) {
-    const [x, z] = layout.positions[i];
-    travel.push(P([x, h / 2, z]));
-    if (i === model.blocks.length - 1) break;
-    const pts = route(layout.positions[i], layout.positions[i + 1], w, d).map((p): Vec3 => [p[0], h / 2, p[2]]);
-    const [n0] = blockWindow(i + 1);
-    prims.push({
-      id: `p${i}`,
-      kind: "pipe",
-      points: pts.map(P),
-      t0: n0 + DT.pipeLag,
-      t1: n0 + DT.pipeLag + DT.pipeDuration,
-      block: -1,
-    });
-    for (const p of pts) travel.push(P(p));
-  }
+  pipes.forEach((pts, i) => {
+    const [p0, p1] = beats.pipe(i);
+    prims.push({ id: `p${i}`, kind: "pipe", points: pts, t0: p0, t1: p1, block: -1 });
+  });
 
   // The fit is solved on the blocks, pipes and dimensions; the construction grid may run past it.
   const all: Vec2[] = [];
@@ -118,5 +123,5 @@ export function layoutDrawing(model: DraftModel, layoutName: "landscape" | "port
     if (p.points) all.push(...p.points);
     if (p.at) all.push(p.at);
   }
-  return { prims, travel, bounds: bounds(all), blockCentres: centres };
+  return { prims, travel, blockFractions, beats, bounds: bounds(all), blockCentres: centres };
 }

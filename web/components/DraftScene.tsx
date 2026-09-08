@@ -6,7 +6,7 @@ import type { DraftModel, Vec2 } from "@/lib/draft/model";
 import { pointAlong } from "@/lib/draft/model";
 import { layoutDrawing, type Drawing, type Prim } from "@/lib/draft/layout";
 import { ISO, solveFit, toScreen, type Fit } from "@/lib/draft/project";
-import { DT, handoffAt, linear, smoothstep, warpedTime } from "@/lib/draft/timeline";
+import { ORBIT, landscapeBeats, linear, smoothstep, warpedTime, type Beats } from "@/lib/draft/timeline";
 import {
   hasSeenThisSession,
   isHardReload,
@@ -17,15 +17,20 @@ import {
 } from "@/lib/hero/gate";
 
 type Phase = "loading" | "intro" | "rest" | "static";
+type LayoutName = "landscape" | "portrait";
 
 const ASSET = "/draft/model.json";
 const ASSET_TIMEOUT_MS = 2500;
 const PHONE = "(max-width: 639px)";
 const SHEET_INSET = 22;
+const PHONE_INSET = 10;
 const TEXT_REF_SCALE = 72;
 const TEXT_PX = { label: 20, stack: 11, dimvalue: 24, dimlabel: 11 } as const;
 const TITLE_H = 84;
 const TITLE_W = 620;
+const TRACK_ZOOM = 1.5;
+const TRACK_LEAD = 0.06;
+const TRACK_EYE = 0.5;
 
 interface Props {
   slotId: string;
@@ -41,11 +46,19 @@ function pathOf(points: Vec2[]): string {
   return d;
 }
 
+function mixFit(a: Fit, b: Fit, t: number): Fit {
+  return {
+    scale: a.scale + (b.scale - a.scale) * t,
+    offsetX: a.offsetX + (b.offsetX - a.offsetX) * t,
+    offsetY: a.offsetY + (b.offsetY - a.offsetY) * t,
+  };
+}
+
 export default function DraftScene({ slotId }: Props) {
   const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [model, setModel] = useState<DraftModel | null>(null);
-  const [layoutName, setLayoutName] = useState<"landscape" | "portrait">("landscape");
+  const [layoutName, setLayoutName] = useState<LayoutName>("landscape");
   const stageRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -63,9 +76,12 @@ export default function DraftScene({ slotId }: Props) {
     let raf = 0;
     let inView = true;
     let viewport = { w: 1, h: 1 };
+    let inset = SHEET_INSET;
     let introFit: Fit | null = null;
+    let trackFit: Fit | null = null;
     let restFit: Fit | null = null;
     let base: Drawing | null = null;
+    let beats: Beats = landscapeBeats();
     let start = 0;
     let pausedAt: number | null = null;
     let skipAt: number | null = null;
@@ -78,7 +94,7 @@ export default function DraftScene({ slotId }: Props) {
 
     const isPhone = () => window.matchMedia(PHONE).matches;
     const finePointer = () => window.matchMedia("(pointer: fine)").matches;
-    const currentLayout = () => (isPhone() || window.innerWidth / window.innerHeight < 0.8 ? "portrait" : "landscape");
+    const currentLayout = (): LayoutName => (isPhone() || window.innerWidth / window.innerHeight < 0.8 ? "portrait" : "landscape");
 
     const setPhaseBoth = (p: Phase) => {
       phaseRef.current = p;
@@ -110,34 +126,47 @@ export default function DraftScene({ slotId }: Props) {
       const h = stage.clientHeight || window.innerHeight;
       viewport = { w, h };
       const name = currentLayout();
+      inset = name === "portrait" ? PHONE_INSET : SHEET_INSET;
       setLayoutName(name);
       base = layoutDrawing(m, name, ISO);
+      beats = base.beats;
       const titleRoom = name === "portrait" ? TITLE_H * 2 + 16 : TITLE_H;
       introFit = solveFit(base.bounds, {
-        x: SHEET_INSET + 24,
-        y: SHEET_INSET + 24,
-        w: w - SHEET_INSET * 2 - 48,
-        h: h - SHEET_INSET * 2 - titleRoom - 48,
+        x: inset + 24,
+        y: inset + 24,
+        w: w - inset * 2 - 48,
+        h: h - inset * 2 - titleRoom - 48,
       }, 0.84);
+      // The tracking shot fits the drawing to the sheet's width, then zooms in; the camera's
+      // vertical position is chosen per frame from where the request is.
+      const byWidth = solveFit(base.bounds, { x: inset + 12, y: 0, w: w - inset * 2 - 24, h: 1e9 }, 0.9);
+      trackFit = { scale: byWidth.scale * TRACK_ZOOM, offsetX: w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * byWidth.scale * TRACK_ZOOM, offsetY: 0 };
       restFit = solveFit(base.bounds, slotRect(), 0.96);
       schedule();
     };
 
-    const currentTime = (now: number) => (skipAt !== null ? warpedTime(tAtSkip, (now - skipAt) / 1000) : (now - start) / 1000);
+    const currentTime = (now: number) => (skipAt !== null ? warpedTime(tAtSkip, (now - skipAt) / 1000, beats.done) : (now - start) / 1000);
+
+    const cameraFit = (time: number, drawing: Drawing): Fit => {
+      if (!introFit || !restFit || !trackFit) return { scale: 1, offsetX: 0, offsetY: 0 };
+      const handoff = smoothstep(beats.handoffStart, beats.handoffEnd, time);
+      if (!beats.tracking) return mixFit(introFit, restFit, handoff);
+      const f = Math.min(1, linear(beats.travelStart, beats.travelEnd, time) + TRACK_LEAD);
+      const focus = pointAlong(drawing.travel, f);
+      const tracking: Fit = { ...trackFit, offsetY: viewport.h * TRACK_EYE - focus[1] * trackFit.scale };
+      const pull = smoothstep(beats.pullbackStart, beats.pullbackEnd, time);
+      return mixFit(tracking, restFit, pull);
+    };
 
     const renderAt = (time: number) => {
       const m = modelRef.current;
       const svg = svgRef.current;
-      if (!m || !svg || !introFit || !restFit) return;
+      if (!m || !svg || !introFit || !restFit || !base) return;
       const name = currentLayout();
-      const cam = { yaw: ISO.yaw + orbit.x * DT.orbitYaw, pitch: ISO.pitch + orbit.y * DT.orbitPitch };
-      const drawing = orbit.x === 0 && orbit.y === 0 && base ? base : layoutDrawing(m, name, cam);
-      const h = handoffAt(time);
-      const fit: Fit = {
-        scale: introFit.scale + (restFit.scale - introFit.scale) * h,
-        offsetX: introFit.offsetX + (restFit.offsetX - introFit.offsetX) * h,
-        offsetY: introFit.offsetY + (restFit.offsetY - introFit.offsetY) * h,
-      };
+      const cam = { yaw: ISO.yaw + orbit.x * ORBIT.yaw, pitch: ISO.pitch + orbit.y * ORBIT.pitch };
+      const drawing = orbit.x === 0 && orbit.y === 0 ? base : layoutDrawing(m, name, cam);
+      const h = smoothstep(beats.handoffStart, beats.handoffEnd, time);
+      const fit = cameraFit(time, drawing);
       const S = (p: Vec2) => toScreen(p, fit);
       // Text does not scale with the projection, so it is sized from the fit instead, and the
       // small annotations drop out when the drawing is too small to carry them.
@@ -179,19 +208,29 @@ export default function DraftScene({ slotId }: Props) {
         group.dataset.glow = glowBlock === i ? "1" : "0";
       });
 
-      const f = linear(DT.travelStart, DT.travelEnd, time);
+      const f = linear(beats.travelStart, beats.travelEnd, time);
       const dot = svg.querySelector<SVGCircleElement>("[data-travel]");
       const trail = svg.querySelector<SVGPathElement>("[data-trail]");
       if (dot && trail) {
         const pos = S(pointAlong(drawing.travel, f));
         dot.setAttribute("cx", pos[0].toFixed(1));
         dot.setAttribute("cy", pos[1].toFixed(1));
-        dot.style.opacity = time >= DT.travelStart ? "1" : "0";
+        dot.setAttribute("r", (5 * Math.max(1, k)).toFixed(1));
+        dot.style.opacity = time >= beats.travelStart ? "1" : "0";
         const steps = 12;
         const trailPts: Vec2[] = [];
-        for (let k = 0; k <= steps; k++) trailPts.push(S(pointAlong(drawing.travel, Math.max(0, f - 0.1) + (0.1 * k) / steps)));
+        for (let s = 0; s <= steps; s++) trailPts.push(S(pointAlong(drawing.travel, Math.max(0, f - 0.1) + (0.1 * s) / steps)));
         trail.setAttribute("d", pathOf(trailPts));
         trail.style.opacity = f > 0 && f < 1 ? "0.8" : "0";
+      }
+
+      const clip = svg.querySelector<SVGRectElement>("[data-clip]");
+      if (clip) {
+        const intro = phaseRef.current === "intro" && h < 1;
+        clip.setAttribute("x", String(intro ? inset : -1e5));
+        clip.setAttribute("y", String(intro ? inset : -1e5));
+        clip.setAttribute("width", String(intro ? viewport.w - inset * 2 : 2e5));
+        clip.setAttribute("height", String(intro ? viewport.h - inset * 2 : 2e5));
       }
 
       const chrome = svg.querySelector<SVGGElement>("[data-chrome]");
@@ -199,27 +238,26 @@ export default function DraftScene({ slotId }: Props) {
         chrome.style.opacity = (1 - h).toFixed(3);
         const border = chrome.querySelector<SVGRectElement>("[data-border]");
         if (border) {
-          border.setAttribute("x", String(SHEET_INSET));
-          border.setAttribute("y", String(SHEET_INSET));
-          border.setAttribute("width", String(viewport.w - SHEET_INSET * 2));
-          border.setAttribute("height", String(viewport.h - SHEET_INSET * 2));
-          border.style.strokeDashoffset = (1 - smoothstep(DT.borderStart, DT.borderEnd, time)).toFixed(4);
+          border.setAttribute("x", String(inset));
+          border.setAttribute("y", String(inset));
+          border.setAttribute("width", String(viewport.w - inset * 2));
+          border.setAttribute("height", String(viewport.h - inset * 2));
+          border.style.strokeDashoffset = (1 - smoothstep(beats.borderStart, beats.borderEnd, time)).toFixed(4);
         }
         const tb = chrome.querySelector<SVGGElement>("[data-titleblock]");
         if (tb) {
-          const tw = Math.min(TITLE_W, viewport.w - SHEET_INSET * 2);
-          tb.setAttribute("transform", `translate(${viewport.w - SHEET_INSET - tw} ${viewport.h - SHEET_INSET - TITLE_H})`);
+          const tw = Math.min(TITLE_W, viewport.w - inset * 2);
+          tb.setAttribute("transform", `translate(${viewport.w - inset - tw} ${viewport.h - inset - TITLE_H})`);
           tb.querySelector<SVGRectElement>("[data-tbrect]")?.setAttribute("width", String(tw));
           tb.querySelector<SVGLineElement>("[data-tbmid]")?.setAttribute("x2", String(tw));
-          tb.style.opacity = smoothstep(DT.borderStart + 0.2, DT.borderEnd + 0.3, time).toFixed(3);
+          tb.style.opacity = smoothstep(beats.borderStart + 0.2, beats.borderEnd + 0.3, time).toFixed(3);
           const stamp = chrome.querySelector<SVGGElement>("[data-stamp]");
           if (stamp) {
-            const s = smoothstep(DT.stampStart, DT.stampEnd, time);
+            const s = smoothstep(beats.stampStart, beats.stampEnd, time);
             const scale = 1.5 - 0.5 * s;
-            stamp.setAttribute(
-              "transform",
-              `translate(${viewport.w - SHEET_INSET - tw - 110} ${viewport.h - SHEET_INSET - TITLE_H / 2}) rotate(-8) scale(${scale.toFixed(3)})`,
-            );
+            const stampX = beats.tracking ? viewport.w / 2 : viewport.w - inset - tw - 110;
+            const stampY = beats.tracking ? viewport.h - inset - TITLE_H - 40 : viewport.h - inset - TITLE_H / 2;
+            stamp.setAttribute("transform", `translate(${stampX} ${stampY}) rotate(-8) scale(${scale.toFixed(3)})`);
             stamp.style.opacity = s.toFixed(3);
           }
         }
@@ -253,26 +291,26 @@ export default function DraftScene({ slotId }: Props) {
       if (phaseRef.current === "intro") {
         if (pausedAt === null) {
           t = currentTime(now);
-          if (t >= DT.handoffStart && !released) {
+          if (t >= beats.handoffStart && !released) {
             released = true;
             releaseArrivals();
             // The page has laid out by now; measure the slot again so the drawing lands exactly.
             restFit = base ? solveFit(base.bounds, slotRect(), 0.96) : restFit;
           }
-          backdrop.style.opacity = (1 - handoffAt(t)).toFixed(3);
+          backdrop.style.opacity = (1 - smoothstep(beats.handoffStart, beats.handoffEnd, t)).toFixed(3);
           if (hintRef.current) {
-            const show = skipAt === null && t >= 1.0 && t < DT.handoffStart ? smoothstep(1.0, 1.6, t) : 0;
+            const show = skipAt === null && t >= 1.0 && t < beats.handoffStart ? smoothstep(1.0, 1.6, t) : 0;
             hintRef.current.style.opacity = show.toFixed(3);
           }
-          if (t >= DT.done) {
-            t = DT.done;
+          if (t >= beats.done) {
+            t = beats.done;
             finishIntro();
           } else {
             again = true;
           }
         }
       } else if (phaseRef.current === "rest") {
-        t = DT.done;
+        t = beats.done;
       }
       const moving = settle();
       if (inView || phaseRef.current === "intro") renderAt(t);
@@ -404,7 +442,7 @@ export default function DraftScene({ slotId }: Props) {
           beginIntro();
         } else {
           releaseArrivals();
-          t = DT.done;
+          t = beats.done;
           backdrop.style.opacity = "0";
           setPhaseBoth("rest");
           schedule();
@@ -453,44 +491,51 @@ export default function DraftScene({ slotId }: Props) {
     >
       <div ref={backdropRef} className="hero-backdrop" />
       <svg ref={svgRef} className="draft-svg" aria-hidden="true">
-        {prims.filter((p) => p.kind === "grid").map((p) => (
-          <path key={p.id} data-id={p.id} className="dr-grid" fill="none" stroke="var(--line-hair)" strokeWidth="1" style={{ opacity: 0 }} />
-        ))}
-        {prims.filter((p) => p.kind === "pipe").map((p) => (
-          <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="2.4" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
-        ))}
-        {model?.blocks.map((b, i) => (
-          <g key={b.id} data-block={i} data-glow="0">
-            {prims.filter((p) => p.block === i && p.kind === "hidden").map((p) => (
-              <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="1" strokeDasharray="6 5" style={{ opacity: 0 }} />
-            ))}
-            {prims.filter((p) => p.block === i && p.kind === "edge").map((p) => (
-              <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="1.6" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
-            ))}
-            {prims.filter((p) => p.block === i && p.kind === "dim").map((p) => (
-              <path key={p.id} data-id={p.id} fill="none" stroke="var(--accent)" strokeWidth="1.2" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
-            ))}
-            {prims.filter((p) => p.block === i && p.at).map((p) => (
-              <text
-                key={p.id}
-                data-id={p.id}
-                className={p.kind === "label" ? "dr-label" : p.kind === "stack" ? "dr-stack" : p.kind === "dimvalue" ? "dr-value" : "dr-measure"}
-                style={{ opacity: 0 }}
-              >
-                {p.text}
-              </text>
-            ))}
-            <rect
-              data-hit={i}
-              className="dr-hit"
-              onPointerEnter={() => window.dispatchEvent(new CustomEvent("hero-glow", { detail: { node: i } }))}
-              onPointerLeave={() => window.dispatchEvent(new CustomEvent("hero-glow", { detail: { node: null } }))}
-              onClick={() => selectBlock(i)}
-            />
-          </g>
-        ))}
-        <path data-trail fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" style={{ opacity: 0 }} />
-        <circle data-travel r="5" fill="var(--accent)" style={{ opacity: 0 }} />
+        <defs>
+          <clipPath id="draft-clip">
+            <rect data-clip x="-100000" y="-100000" width="200000" height="200000" />
+          </clipPath>
+        </defs>
+        <g clipPath="url(#draft-clip)">
+          {prims.filter((p) => p.kind === "grid").map((p) => (
+            <path key={p.id} data-id={p.id} fill="none" stroke="var(--line-hair)" strokeWidth="1" style={{ opacity: 0 }} />
+          ))}
+          {prims.filter((p) => p.kind === "pipe").map((p) => (
+            <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="2.4" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
+          ))}
+          {model?.blocks.map((b, i) => (
+            <g key={b.id} data-block={i} data-glow="0">
+              {prims.filter((p) => p.block === i && p.kind === "hidden").map((p) => (
+                <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="1" strokeDasharray="6 5" style={{ opacity: 0 }} />
+              ))}
+              {prims.filter((p) => p.block === i && p.kind === "edge").map((p) => (
+                <path key={p.id} data-id={p.id} fill="none" stroke="var(--line)" strokeWidth="1.6" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
+              ))}
+              {prims.filter((p) => p.block === i && p.kind === "dim").map((p) => (
+                <path key={p.id} data-id={p.id} fill="none" stroke="var(--accent)" strokeWidth="1.2" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
+              ))}
+              {prims.filter((p) => p.block === i && p.at).map((p) => (
+                <text
+                  key={p.id}
+                  data-id={p.id}
+                  className={p.kind === "label" ? "dr-label" : p.kind === "stack" ? "dr-stack" : p.kind === "dimvalue" ? "dr-value" : "dr-measure"}
+                  style={{ opacity: 0 }}
+                >
+                  {p.text}
+                </text>
+              ))}
+              <rect
+                data-hit={i}
+                className="dr-hit"
+                onPointerEnter={() => window.dispatchEvent(new CustomEvent("hero-glow", { detail: { node: i } }))}
+                onPointerLeave={() => window.dispatchEvent(new CustomEvent("hero-glow", { detail: { node: null } }))}
+                onClick={() => selectBlock(i)}
+              />
+            </g>
+          ))}
+          <path data-trail fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" style={{ opacity: 0 }} />
+          <circle data-travel r="5" fill="var(--accent)" style={{ opacity: 0 }} />
+        </g>
         <g data-chrome>
           <rect data-border fill="none" stroke="var(--line)" strokeWidth="1.5" pathLength={1} strokeDasharray="1" style={{ strokeDashoffset: 1 }} />
           <g data-titleblock style={{ opacity: 0 }}>
