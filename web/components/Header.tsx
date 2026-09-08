@@ -32,7 +32,7 @@ export default function Header() {
             CI run {source.runId}
           </a>
         </div>
-        <nav aria-label="Primary" className="tb-cell col-span-3 flex items-end gap-5 md:col-span-1">
+        <nav aria-label="Primary" className="tb-cell col-span-3 flex flex-wrap items-end gap-x-5 gap-y-1 md:col-span-1">
           {site.nav.map((item) => (
             <a key={item.label} href={item.href} className="tb-nav">
               {item.label}

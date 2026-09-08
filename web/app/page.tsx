@@ -17,7 +17,7 @@ export default function Page() {
     <>
       <link rel="preload" href="/draft/model.json" as="fetch" crossOrigin="anonymous" />
       <div className="px-2 md:px-[2vw]">
-        <div className="md:flex md:h-svh md:flex-col md:pb-[1.5vw]">
+        <div className="first-screen">
           <Header />
           <HeroDraft />
         </div>

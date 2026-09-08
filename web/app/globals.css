@@ -430,9 +430,59 @@ html.intro-pending .arrive {
 }
 
 .hero-note {
+  position: relative;
+  margin: 0 0.5rem 0.5rem;
   border: 1.5px solid var(--line);
   background: rgba(18, 53, 102, 0.88);
   padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.hero-box {
+  position: relative;
+  height: min(64svh, 720px);
+  min-height: 360px;
+}
+
+.hero-slot {
+  position: absolute;
+  inset: 3% 3% 4%;
+}
+
+/* The first screen: on a real desktop viewport the header and sheet 1 fill it exactly and the
+   headline is a note in the sheet's corner. Short or portrait viewports (phones, landscape
+   phones, portrait tablets) stack the note under the drawing instead. */
+@media (min-width: 768px) and (min-height: 520px) and (min-aspect-ratio: 4/5) {
+  .first-screen {
+    display: flex;
+    flex-direction: column;
+    height: 100svh;
+    padding-bottom: 1.5vw;
+  }
+  .fill {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .hero-box {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+  }
+  .hero-slot {
+    inset: 2% 2% 5% 32%;
+  }
+  .hero-note {
+    position: absolute;
+    left: 2.5%;
+    bottom: 5%;
+    margin: 0;
+    max-width: 30rem;
+  }
+}
+
+.sched-row > p {
+  grid-column: 1 / -1;
 }
 
 .headline {

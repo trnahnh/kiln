@@ -140,7 +140,9 @@ export default function DraftScene({ slotId }: Props) {
       // The tracking shot fits the drawing to the sheet's width, then zooms in; the camera's
       // vertical position is chosen per frame from where the request is.
       const byWidth = solveFit(base.bounds, { x: inset + 12, y: 0, w: w - inset * 2 - 24, h: 1e9 }, 0.9);
-      trackFit = { scale: byWidth.scale * TRACK_ZOOM, offsetX: w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * byWidth.scale * TRACK_ZOOM, offsetY: 0 };
+      // Zoom in on a phone; a portrait tablet is wide enough that the fit is already large.
+      const zoom = Math.max(1, Math.min(TRACK_ZOOM, TRACK_ZOOM * Math.sqrt(393 / w)));
+      trackFit = { scale: byWidth.scale * zoom, offsetX: w / 2 - ((base.bounds.minX + base.bounds.maxX) / 2) * byWidth.scale * zoom, offsetY: 0 };
       restFit = solveFit(base.bounds, slotRect(), 0.96);
       schedule();
     };

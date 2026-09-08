@@ -38,8 +38,9 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The gate script adds intro-pending to <html> before hydration; that class difference is intended.
   return (
-    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
+    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`} suppressHydrationWarning>
       <body>
         <script id="hero-gate" dangerouslySetInnerHTML={{ __html: GATE_SCRIPT }} />
         {children}

@@ -9,20 +9,20 @@ export const HERO_SLOT_ID = "hero-slot";
 // drawing lands in the slot at hand-off and the headline is a note on the sheet.
 export default function HeroDraft() {
   return (
-    <section className="hero-copy relative z-[1] mx-auto flex w-full flex-col md:min-h-0 md:flex-1">
-      <div className="sheet arrive mt-3 flex w-full flex-col md:mt-4 md:min-h-0 md:flex-1" style={{ "--arrive-delay": "0ms" } as React.CSSProperties}>
-        <div className="sheet-inner flex flex-col md:min-h-0 md:flex-1">
-          <div className="relative flex flex-col md:min-h-0 md:flex-1">
-            <div className="relative h-[min(64svh,720px)] min-h-[360px] md:h-auto md:min-h-0 md:flex-1">
+    <section className="hero-copy fill relative z-[1] mx-auto w-full">
+      <div className="sheet arrive fill mt-3 w-full md:mt-4" style={{ "--arrive-delay": "0ms" } as React.CSSProperties}>
+        <div className="sheet-inner fill">
+          <div className="fill relative">
+            <div className="hero-box">
               {/* The rest-fit rect: on desktop the right part of the sheet, leaving the note its corner. */}
-              <div id={HERO_SLOT_ID} className="hero-slot absolute inset-x-[3%] bottom-[4%] top-[3%] md:left-[32%] md:right-[2%] md:bottom-[5%] md:top-[2%]">
+              <div id={HERO_SLOT_ID} className="hero-slot">
                 {/* Shown when the scene cannot run; DraftScene hides it once the drawing is live. A plain
                     img: it is a committed SVG, and next/image would only add a loader round-trip. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/draft/drawing.svg" alt="" width={1600} height={1000} decoding="async" />
               </div>
             </div>
-            <div className="hero-note relative mx-2 mb-2 md:absolute md:bottom-[5%] md:left-[2.5%] md:m-0 md:max-w-[30rem]">
+            <div className="hero-note">
               <h1 className="headline text-[2.6rem] md:text-[3.3rem]">
                 {site.headlineLines.map((line) => (
                   <span key={line} className="block">
