@@ -41,12 +41,16 @@ until `content/metrics.json` is regenerated and committed.
 ## The drawing
 
 ```
-pnpm build:draft    # writes public/draft/model.json, drawing.svg and card.svg
+pnpm build:draft    # writes public/draft/model.json, drawing.svg and card.svg,
+                    # and ../docs/assets/architecture.svg
 ```
 
 `scripts/build-draft.ts` builds the model (six blocks, two layouts, the measured values stamped
 from `content/metrics.json`) and renders the finished sheet as the fallback SVG and the social
-card. `lib/draft/` holds the line model (`model.ts`), the orthographic projection with hidden-line
+card. It renders it once more with `annotate` for the root [README](../README.md#architecture):
+the same sheet plus the reject branch off the policy gate, the Kafka hub every subsystem
+publishes to, a direction chevron on each run (a static sheet has no animation to show which way
+the request travels) and a notes block. CI diffs `docs/assets` with `public/draft`. `lib/draft/` holds the line model (`model.ts`), the orthographic projection with hidden-line
 detection and the contain-fit (`project.ts`), every primitive with its draw-in window
 (`layout.ts`), the beats (`timeline.ts`) and the static renderer (`svg.ts`). The client
 (`components/DraftScene.tsx`) projects the model each frame into inline SVG, so the drawing

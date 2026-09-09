@@ -1,9 +1,10 @@
 // Builds the drawing's committed assets: public/draft/model.json (the six blocks, their
-// two layouts and the measured values stamped from content/metrics.json) and
-// public/draft/drawing.svg (the finished sheet, the fallback and social-card source).
-// Run with `pnpm build:draft`; CI rebuilds both and fails on any diff.
+// two layouts and the measured values stamped from content/metrics.json),
+// public/draft/drawing.svg (the finished sheet, the fallback and social-card source) and
+// docs/assets/architecture.svg (the same sheet annotated, which the root README shows).
+// Run with `pnpm build:draft`; CI rebuilds them all and fails on any diff.
 import { mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { DraftModel } from "../lib/draft/model.ts";
 import { renderSvg, type SvgPalette } from "../lib/draft/svg.ts";
 
@@ -66,5 +67,12 @@ writeFileSync(jsonPath, JSON.stringify(model) + "\n");
 const svgPath = resolve(outDir, "drawing.svg");
 writeFileSync(svgPath, renderSvg(model, paletteFromCss()));
 const cardPath = resolve(outDir, "card.svg");
-writeFileSync(cardPath, renderSvg(model, paletteFromCss(), 1200, 630));
-console.log(`model.json ${statSync(jsonPath).size} B, drawing.svg ${statSync(svgPath).size} B, card.svg ${statSync(cardPath).size} B`);
+writeFileSync(cardPath, renderSvg(model, paletteFromCss(), { width: 1200, height: 630 }));
+
+const docsDir = resolve(root, "../docs/assets");
+mkdirSync(docsDir, { recursive: true });
+const readmePath = resolve(docsDir, "architecture.svg");
+writeFileSync(readmePath, renderSvg(model, paletteFromCss(), { sheet: "1 OF 1", annotate: true }));
+
+const sizes = [jsonPath, svgPath, cardPath, readmePath].map((f) => `${basename(f)} ${statSync(f).size} B`);
+console.log(sizes.join(", "));

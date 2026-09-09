@@ -6,6 +6,7 @@ on:
     paths:
       - "web/**"
       - "docs/METRICS.md"
+      - "docs/assets/**"
       - ".github/workflows/web.yaml"
 
 jobs:
@@ -27,8 +28,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: metrics.json matches docs/METRICS.md
         run: pnpm check:metrics
-      - name: drawing assets are committed
-        run: pnpm build:draft && git diff --exit-code -- public/draft
+      - name: drawing assets are committed, the site's and the README's
+        run: pnpm build:draft && git diff --exit-code -- public/draft ../docs/assets
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
