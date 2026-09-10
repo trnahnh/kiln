@@ -33,6 +33,8 @@ Without a platform layer, teams get infrastructure one of two ways: a ticket to 
 
 This platform replaces both paths with one: request through a CRD, get policy-checked, provisioned, scheduled, deployed, and logged automatically.
 
+Why each piece was built rather than adopted, Argo Rollouts, Chaos Mesh, Backstage and the rest, is answered per subsystem in [`docs/SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md) under "Alternatives considered".
+
 Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md). The landing page, a drawing of the request flow dimensioned with the validation numbers, is at [kiln-idp.vercel.app](https://kiln-idp.vercel.app) and lives in [`web/`](web/README.md).
 
 ---
