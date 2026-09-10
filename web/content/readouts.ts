@@ -1,6 +1,7 @@
 import metrics from "./metrics.json";
 import type { NodeId } from "@/lib/hero/params";
 import { rowKeys } from "./site";
+import { provisioningClaim } from "./claim";
 
 export interface Readout {
   value: string;
@@ -19,7 +20,7 @@ export const source = metrics.source;
 export const completeness = metrics.completeness;
 export const validationRows = metrics.validation;
 
-export const caption = `${metrics.setup.identities} identities, one simulated week, ${metrics.completeness.auditRows} audit rows, chain intact.`;
+export const caption = provisioningClaim(row(rowKeys.provisioning));
 
 export const readouts: Record<NodeId, Readout> = {
   gitops: {

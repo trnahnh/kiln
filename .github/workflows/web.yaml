@@ -6,6 +6,7 @@ on:
     paths:
       - "web/**"
       - "docs/METRICS.md"
+      - "README.md"
       - "docs/assets/**"
       - ".github/workflows/web.yaml"
 

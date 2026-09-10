@@ -3,10 +3,12 @@
 // edit that moves a number cannot leave the site quietly disagreeing with it.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { provisioningClaim, claimMarker } from "../content/claim.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const source = resolve(root, "../docs/METRICS.md");
 const target = resolve(root, "content/metrics.json");
+const readme = resolve(root, "../README.md");
 
 const md = readFileSync(source, "utf8");
 
@@ -78,14 +80,29 @@ const metrics = {
 };
 
 const next = JSON.stringify(metrics, null, 2) + "\n";
+
+const provisioning = rows.find((r) => r.requestType === "Provisioning (standard Postgres)");
+if (!provisioning) throw new Error("docs/METRICS.md: no provisioning row");
+const claim = provisioningClaim(provisioning);
+const readmeText = readFileSync(readme, "utf8");
+const claimRe = new RegExp(`${claimMarker.open}\\r?\\n([^]*?)\\r?\\n${claimMarker.close}`);
+const readmeClaim = readmeText.match(claimRe);
+if (!readmeClaim) throw new Error(`README.md: no ${claimMarker.open} block`);
+const readmeNext = readmeText.replace(claimRe, `${claimMarker.open}\n${claim}\n${claimMarker.close}`);
+
 if (process.argv.includes("--check")) {
   const current = existsSync(target) ? readFileSync(target, "utf8") : "";
   if (current !== next) {
     console.error("content/metrics.json is out of date with docs/METRICS.md; run `pnpm pull:metrics` and commit the result");
     process.exit(1);
   }
-  console.log("content/metrics.json matches docs/METRICS.md");
+  if (readmeClaim[1] !== claim) {
+    console.error("README.md's provisioning claim is out of date with docs/METRICS.md; run `pnpm pull:metrics` and commit the result");
+    process.exit(1);
+  }
+  console.log("content/metrics.json and the README claim match docs/METRICS.md");
 } else {
   writeFileSync(target, next);
-  console.log(`wrote content/metrics.json: ${rows.length} validation rows, run ${metrics.source.runId}, commit ${metrics.source.commit}`);
+  writeFileSync(readme, readmeNext);
+  console.log(`wrote content/metrics.json: ${rows.length} validation rows, run ${metrics.source.runId}, commit ${metrics.source.commit}; README claim: ${claim}`);
 }

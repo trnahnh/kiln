@@ -5,8 +5,11 @@
 
 **A request goes in. A hardened resource comes out.**
 
-Self-service Kubernetes infrastructure — policy-gated, cost-placed,
-canary-delivered, chaos-tested, and every step on a hash-chained audit log.
+A developer's request is policy-checked, provisioned, canary-delivered and chaos-tested without a ticket, and every step lands on a hash-chained audit log.
+
+<!-- claim:provisioning -->
+Provisioning a standard Postgres: 11s p50, 16s p95, n=10. The status quo, a Terraform pull request with human review, waits hours to a day.
+<!-- /claim:provisioning -->
 
 [![Live](https://img.shields.io/badge/Live-kiln--idp.vercel.app-123566?style=for-the-badge&logo=googlechrome&logoColor=white)](https://kiln-idp.vercel.app)
 [![CI](https://img.shields.io/github/actions/workflow/status/trnahnh/kiln/ci.yaml?branch=main&style=for-the-badge&label=CI&color=123566&logo=githubactions&logoColor=white)](https://github.com/trnahnh/kiln/actions/workflows/ci.yaml)

@@ -11,7 +11,7 @@ export const site = {
   headline: "A request goes in. A hardened resource comes out.",
   headlineLines: ["A request goes in.", "A hardened resource comes out."],
   subline:
-    "Policy-gated, cost-placed, canary-delivered, chaos-tested, and every step on a hash-chained audit log.",
+    "A developer's request is policy-checked, provisioned, canary-delivered and chaos-tested without a ticket, and every step lands on a hash-chained audit log.",
   nav: [
     { label: "Design", href: `${DOCS}/SYSTEM_DESIGN.md` },
     { label: "Metrics", href: `${DOCS}/METRICS.md` },
