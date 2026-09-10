@@ -38,6 +38,8 @@ This platform replaces both paths with one: request through a CRD, get policy-ch
 
 Why each piece was built rather than adopted, Argo Rollouts, Chaos Mesh, Backstage and the rest, is answered per subsystem in [`docs/SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md) under "Alternatives considered".
 
+The platform does not know, and does not need to know, whether a person or an AI agent submitted the request. An agent gets the same JSON contract, the same bearer token, the same policy gate before anything is provisioned and the same hash-chained audit row as a developer at a keyboard. That is what makes agent-submitted infrastructure safe to allow: the guardrails are in the structure of the platform, not in the judgement of the requester.
+
 Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md). The landing page, a drawing of the request flow dimensioned with the validation numbers, is at [kiln-idp.vercel.app](https://kiln-idp.vercel.app) and lives in [`web/`](web/README.md).
 
 ---

@@ -21,6 +21,8 @@ export const site = {
     primary: { label: "Read the system design", href: `${DOCS}/SYSTEM_DESIGN.md` },
     secondary: { label: "See the validation run" },
   },
+  requesters:
+    "The platform does not know, and does not need to know, whether a person or an AI agent submitted the request. An agent gets the same JSON contract, the same bearer token, the same policy gate before anything is provisioned and the same hash-chained audit row as a developer at a keyboard. That is what makes agent-submitted infrastructure safe to allow: the guardrails are in the structure of the platform, not in the judgement of the requester.",
 };
 
 export interface FlowItem {

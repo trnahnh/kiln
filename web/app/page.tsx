@@ -11,6 +11,7 @@ import ValidationTable from "@/components/ValidationTable";
 import Footer from "@/components/Footer";
 import ReplayIntro from "@/components/ReplayIntro";
 import { readouts, source } from "@/content/readouts";
+import { site } from "@/content/site";
 
 export default function Page() {
   return (
@@ -94,6 +95,7 @@ export default function Page() {
             lede="Guarantees that hold structurally, not by convention. Each one is settled by an accepted decision record; records are immutable, and a change means a new record that supersedes it."
           >
             <Invariants bare />
+            <p className="measure mt-14 border-t border-hairline pt-6 text-[15px] leading-relaxed text-fg-muted">{site.requesters}</p>
           </Sheet>
 
           <Sheet
