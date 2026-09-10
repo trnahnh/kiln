@@ -111,12 +111,13 @@ type simulation struct {
 	start      time.Time
 	mu         sync.Mutex
 	prometheus string
+	client     *http.Client
 }
 
 func (h *traceHarness) testSimulatedWeek(t *testing.T) {
 	g := NewWithT(t)
 	h.g = g
-	s := &simulation{traceHarness: h, cfg: simConfigFromEnv()}
+	s := &simulation{traceHarness: h, cfg: simConfigFromEnv(), client: freshConnectionClient()}
 	t.Logf("simulation: %d identities, one simulated week in %s, seed %d", s.cfg.identities, s.cfg.window, s.cfg.seed)
 	s.forwardPrometheus()
 	s.buildIdentities()
@@ -556,7 +557,7 @@ func (s *simulation) post(subject string, body any) (int, map[string]any, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.tokenFor(subject))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -564,6 +565,12 @@ func (s *simulation) post(subject string, body any) (int, map[string]any, error)
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out, nil
+}
+
+// The week runs for twenty minutes through one port-forward, whose inner streams reset now
+// and then; a kept-alive socket that inherits a reset returns EOF on the next request.
+func freshConnectionClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 }
 
 func (s *simulation) tokenFor(subject string) string {
