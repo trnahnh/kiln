@@ -39,7 +39,7 @@ export default function HeroDraft() {
                 <a href={source.runUrl} className="link text-sm">
                   {site.actions.secondary.label}
                 </a>
-                <ReplayIntro variant="inline" />
+                <ReplayIntro />
               </div>
             </div>
           </div>

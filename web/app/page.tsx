@@ -9,7 +9,6 @@ import Guardrails from "@/components/Guardrails";
 import Invariants from "@/components/Invariants";
 import ValidationTable from "@/components/ValidationTable";
 import Footer from "@/components/Footer";
-import ReplayIntro from "@/components/ReplayIntro";
 import { readouts, source } from "@/content/readouts";
 import { site } from "@/content/site";
 
@@ -109,7 +108,6 @@ export default function Page() {
         </main>
         <Footer />
       </div>
-      <ReplayIntro />
     </>
   );
 }

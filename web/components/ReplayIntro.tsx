@@ -3,14 +3,10 @@
 import { useEffect, useState } from "react";
 import { hasSeenThisSession } from "@/lib/hero/gate";
 
-interface Props {
-  variant?: "fixed" | "inline";
-}
-
-// A body-level fixed sibling of the overlay on desktop (hides on intro-shown, returns on
-// intro-done); an inline link under the hero caption on phones, where a fixed pill would
-// sit on top of the content.
-export default function ReplayIntro({ variant = "fixed" }: Props) {
+// One control, in the hero's actions row on every viewport: hidden while the intro plays,
+// back once it is done. A fixed pill used to stand in for it on desktop, and covered the
+// footer; on phones it was a smaller link under the button that nobody found.
+export default function ReplayIntro() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -26,20 +22,8 @@ export default function ReplayIntro({ variant = "fixed" }: Props) {
   }, []);
 
   if (!visible) return null;
-  const replay = () => window.dispatchEvent(new Event("replay-intro"));
-  if (variant === "inline") {
-    return (
-      <button type="button" onClick={replay} className="mt-3 text-[13px] text-fg-faint underline underline-offset-4 md:hidden">
-        Replay intro
-      </button>
-    );
-  }
   return (
-    <button
-      type="button"
-      onClick={replay}
-      className="fixed bottom-5 right-5 z-[900] hidden rounded-full border border-hairline bg-ink px-3.5 py-1.5 text-xs text-fg-faint transition-colors hover:border-hairline-strong hover:text-fg-muted md:block"
-    >
+    <button type="button" onClick={() => window.dispatchEvent(new Event("replay-intro"))} className="link text-sm">
       Replay intro
     </button>
   );

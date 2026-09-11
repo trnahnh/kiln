@@ -40,7 +40,7 @@ export default function Hero({ band }: { band?: ReactNode }) {
             </div>
             <div className="mt-6 text-center md:mt-8">
               <p className="text-sm text-fg-faint">{caption}</p>
-              <ReplayIntro variant="inline" />
+              <ReplayIntro />
             </div>
           </div>
         </div>
