@@ -106,6 +106,9 @@ export default function DraftScene({ slotId }: Props) {
     const setPhaseBoth = (p: Phase) => {
       phaseRef.current = p;
       setPhase(p);
+      // Safari paints :focus-visible for script focus, and the ring's only on-screen edge is
+      // the stage's bottom, a stray accent line across the sheet once the page scrolls.
+      if (p !== "intro" && document.activeElement === stage) stage.blur();
     };
     const lockScroll = (on: boolean) => {
       if (on === scrollLocked) return;

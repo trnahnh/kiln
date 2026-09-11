@@ -301,6 +301,10 @@ html.intro-pending .arrive {
   z-index: 0;
 }
 
+.hero-stage:not([data-phase="intro"]):focus-visible {
+  outline: none;
+}
+
 .hero-backdrop {
   position: absolute;
   top: 0;
