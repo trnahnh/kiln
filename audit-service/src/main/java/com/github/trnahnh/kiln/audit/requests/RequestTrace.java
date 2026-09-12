@@ -2,6 +2,7 @@ package com.github.trnahnh.kiln.audit.requests;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -38,13 +39,13 @@ public class RequestTrace {
             return Optional.empty();
         }
         Map<String, String> carrier = new HashMap<>();
-        propagator.inject(span.context(), carrier, Map::put);
+        propagator.inject(span.context(), carrier, (c, key, value) -> carrier.put(key, value));
         return Optional.ofNullable(carrier.get(HEADER_TRACEPARENT));
     }
 
     /** Runs the admission step as a child span named after what was submitted. */
     public <T> T admission(String resource, Supplier<T> apply) {
-        Span span = tracer.nextSpan().name("admission").tag("kiln.resource", resource).start();
+        Span span = tracer.nextSpan().name("admission").tag("kiln.resource", Objects.requireNonNull(resource)).start();
         try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
             return apply.get();
         } catch (RuntimeException e) {

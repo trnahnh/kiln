@@ -23,6 +23,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.BeforeAll;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.MethodOrderer;
@@ -129,7 +130,7 @@ class AuditServiceIT {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    void publishRaw(String key, byte[] value) throws Exception {
+    void publishRaw(@NonNull String key, byte[] value) throws Exception {
         producer.send(TOPIC, key, value).get();
     }
 
@@ -145,7 +146,7 @@ class AuditServiceIT {
                         rs.getString(8), rs.getString(9)));
     }
 
-    double counter(String name) {
+    double counter(@NonNull String name) {
         var c = meters.find(name).counter();
         return c == null ? 0 : c.count();
     }
@@ -211,9 +212,8 @@ class AuditServiceIT {
         RestClient c = client();
         assertThat(c.get().uri("/healthz").retrieve().body(String.class)).contains("ok");
 
-        for (String path : new String[] {"/v1/audit", "/v1/audit/verify"}) {
-            assertThat(status(() -> c.get().uri(path).retrieve().toBodilessEntity())).isEqualTo(HttpStatus.UNAUTHORIZED);
-        }
+        assertThat(status(() -> c.get().uri("/v1/audit").retrieve().toBodilessEntity())).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(status(() -> c.get().uri("/v1/audit/verify").retrieve().toBodilessEntity())).isEqualTo(HttpStatus.UNAUTHORIZED);
         String reader = jwt.token("reader@company.com", List.of("audit:read"));
         assertThat(status(() -> c.get().uri("/v1/audit/verify").header("Authorization", "Bearer " + reader).retrieve().toBodilessEntity()))
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -353,7 +353,7 @@ class AuditServiceIT {
         throw new AssertionError("no record on " + TOPIC + " carries " + eventId);
     }
 
-    private JsonNode get(String path, String token) {
+    private JsonNode get(@NonNull String path, String token) {
         return json.readTree(client().get().uri(path).header("Authorization", "Bearer " + token).retrieve().body(String.class));
     }
 

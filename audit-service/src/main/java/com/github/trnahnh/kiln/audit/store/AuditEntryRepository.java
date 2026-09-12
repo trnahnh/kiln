@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,7 +19,7 @@ public interface AuditEntryRepository extends JpaRepository<AuditEntry, Long>, J
 
     List<AuditEntry> findAllByOrderBySeqAsc();
 
-    default List<AuditEntry> search(String actor, String resource, Instant from, Instant to, Pageable page) {
+    default List<AuditEntry> search(String actor, String resource, Instant from, Instant to, @NonNull Pageable page) {
         Specification<AuditEntry> spec = (root, query, cb) -> {
             List<Predicate> where = new ArrayList<>();
             if (actor != null) {

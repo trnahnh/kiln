@@ -1,5 +1,6 @@
 package com.github.trnahnh.kiln.audit.publish;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -17,7 +18,8 @@ public class KafkaProducerConfig {
      */
     @Bean
     @SuppressWarnings("unchecked")
-    KafkaTemplate<String, byte[]> auditKafkaTemplate(ProducerFactory<?, ?> factory, ObservationRegistry observations) {
+    KafkaTemplate<String, byte[]> auditKafkaTemplate(@NonNull ProducerFactory<?, ?> factory,
+            @NonNull ObservationRegistry observations) {
         KafkaTemplate<String, byte[]> template = new KafkaTemplate<>((ProducerFactory<String, byte[]>) factory);
         template.setObservationEnabled(true);
         template.setObservationRegistry(observations);

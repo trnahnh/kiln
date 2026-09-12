@@ -1,7 +1,9 @@
 package com.github.trnahnh.kiln.audit.publish;
 
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
@@ -17,16 +19,16 @@ import com.github.trnahnh.kiln.audit.event.WireEventCodec;
 public class EventPublisher {
 
     private final KafkaTemplate<String, byte[]> kafka;
-    private final String topic;
+    private final @NonNull String topic;
 
-    public EventPublisher(KafkaTemplate<String, byte[]> kafka, @Value("${kiln.audit.topic}") String topic) {
+    public EventPublisher(KafkaTemplate<String, byte[]> kafka, @Value("${kiln.audit.topic}") @NonNull String topic) {
         this.kafka = kafka;
         this.topic = topic;
     }
 
     public void publish(WireEvent event) {
         try {
-            kafka.send(topic, event.resource(), WireEventCodec.encode(event)).get();
+            kafka.send(topic, Objects.requireNonNull(event.resource()), WireEventCodec.encode(event)).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PublishException("interrupted publishing " + event.eventId(), e);
