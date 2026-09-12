@@ -34,6 +34,14 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: the end-to-end request flow through the REST path across the six already-deployed subsystems, with one OpenTelemetry trace spanning it (the cross-cutting section of [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md#cross-cutting-observability)); run the Validation Plan in [`METRICS.md`](METRICS.md#validation-plan).
   Exit criterion: the full synthetic case study completes and produces a before/after comparison table against the baselines in `METRICS.md`.
 
+- [ ] **Phase 8: Durable audit outbox**
+  Scope: every controller records an audit event in its CR's status in the same write that commits the transition, and a drainer publishes it afterwards, so a crash between the transition and Kafka's acknowledgement loses nothing (ADR-0022, superseding the memory-only buffer of ADR-0017). The REST path publishes before it applies. The scheduler's `SCHEDULE` event stays memory-buffered as a named residual.
+  Exit criterion: with every controller SIGKILLed repeatedly during a burst of requests, each phase transition observed by an informer the test owns has exactly one audit row, the chain verifies, and `kiln_audit_publish_failures_total` is zero.
+
+- [ ] **Phase 9: External anchor for the hash chain**
+  Scope: the audit service periodically signs the chain head (Ed25519), chains each checkpoint to the previous one, and writes it to object storage under a compliance-mode object lock (MinIO on kind, S3 in cloud); `GET /v1/audit/verify` checks every checkpoint and fails closed when the store is unreachable; an offline verifier needs only the public key, the database and the bucket. Defends against a database writer who rewrites rows and recomputes every hash; a compromised service or Kafka is out of scope and stated so (ADR-0023).
+  Exit criterion: a rewrite of the whole chain from genesis with every hash recomputed is named by `/v1/audit/verify` and by the offline verifier against the checkpoints; the bucket owner cannot delete a checkpoint; the unanchored window never exceeds 100 rows or 60 seconds.
+
 ## Notes
 
 - No subsystem starts before the prior one's exit criterion is met. This is the single biggest scope-creep risk on a six-subsystem platform, treat the checklist above as a hard gate, not a suggestion.
