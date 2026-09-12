@@ -22,10 +22,19 @@ type Publisher interface {
 	Publish(context.Context, Event)
 }
 
+// Deliverer publishes one event and returns once the broker has acknowledged it, or with
+// the reason it could not; headers are the trace headers captured when the event was
+// committed (ADR-0022).
+type Deliverer interface {
+	Deliver(ctx context.Context, e Event, headers map[string]string) error
+}
+
 // Discard is the publisher of a controller with no brokers configured.
 type Discard struct{}
 
 func (Discard) Publish(context.Context, Event) {}
+
+func (Discard) Deliver(context.Context, Event, map[string]string) error { return nil }
 
 // Recorder keeps every event in memory with the trace it was published under; tests read
 // them back.
@@ -40,6 +49,11 @@ func (r *Recorder) Publish(ctx context.Context, e Event) {
 	defer r.mu.Unlock()
 	r.events = append(r.events, e)
 	r.traces = append(r.traces, tracing.TraceID(ctx))
+}
+
+func (r *Recorder) Deliver(ctx context.Context, e Event, headers map[string]string) error {
+	r.Publish(tracing.FromHeaders(ctx, headers), e)
+	return nil
 }
 
 func (r *Recorder) Events() []Event {
@@ -148,6 +162,26 @@ func (k *Kafka) Publish(ctx context.Context, e Event) {
 	default:
 		k.fail(e, ErrBufferFull)
 	}
+}
+
+// Deliver produces e and waits for the acknowledgement. A validation failure is counted
+// and reported like a drop, since no retry can fix it; a broker failure is only returned.
+func (k *Kafka) Deliver(ctx context.Context, e Event, headers map[string]string) error {
+	if err := e.Validate(); err != nil {
+		k.fail(e, err)
+		return err
+	}
+	value, err := json.Marshal(e)
+	if err != nil {
+		k.fail(e, err)
+		return err
+	}
+	rec := &kgo.Record{Topic: k.topic, Key: []byte(e.Resource), Value: value, Headers: recordHeaders(headers)}
+	if err := k.client.ProduceSync(ctx, rec).FirstErr(); err != nil {
+		return err
+	}
+	k.published.WithLabelValues(e.Action).Inc()
+	return nil
 }
 
 func (k *Kafka) drain() {

@@ -133,6 +133,66 @@ func TestKafkaDeliversToTheTopicKeyedByResource(t *testing.T) {
 	}
 }
 
+func TestKafkaDeliverWaitsForTheAcknowledgement(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, Topic))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	pub, err := NewKafka(Options{Brokers: cluster.ListenAddrs()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	defer pub.Close(ctx)
+
+	otel.SetTracerProvider(sdktrace.NewTracerProvider())
+	defer otel.SetTracerProvider(noop.NewTracerProvider())
+	spanCtx, span := otel.Tracer("test").Start(context.Background(), "DEPLOY")
+	headers := tracing.Headers(spanCtx)
+	span.End()
+
+	e := sample(DeterministicID("deliver-sync"))
+	if err := pub.Deliver(ctx, e, headers); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	if err := pub.Deliver(ctx, Event{}, nil); err == nil {
+		t.Fatal("an invalid event must be refused")
+	}
+
+	consumer, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.ConsumeTopics(Topic), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Close()
+	recs := consumer.PollFetches(ctx).Records()
+	if len(recs) != 1 || string(recs[0].Key) != e.Resource {
+		t.Fatalf("want one record keyed by the resource, got %d", len(recs))
+	}
+	got := map[string]string{}
+	for _, h := range recs[0].Headers {
+		got[h.Key] = string(h.Value)
+	}
+	if tracing.TraceID(tracing.FromHeaders(context.Background(), got)) != tracing.TraceID(spanCtx) {
+		t.Errorf("the record must carry the headers captured at the transition, got %v", got)
+	}
+}
+
+func TestKafkaDeliverReturnsTheBrokerFailure(t *testing.T) {
+	pub, err := NewKafka(Options{Brokers: []string{"127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pub.client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := pub.Deliver(ctx, sample(DeterministicID("unreachable")), nil); err == nil {
+		t.Fatal("an unreachable broker must be reported, never swallowed")
+	}
+}
+
 func TestRecorderKeepsTheTrace(t *testing.T) {
 	otel.SetTracerProvider(sdktrace.NewTracerProvider())
 	defer otel.SetTracerProvider(noop.NewTracerProvider())
