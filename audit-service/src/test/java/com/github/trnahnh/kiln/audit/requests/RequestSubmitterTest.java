@@ -3,8 +3,10 @@ package com.github.trnahnh.kiln.audit.requests;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +21,7 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import com.github.trnahnh.kiln.audit.event.WireEvent;
 import com.github.trnahnh.kiln.audit.publish.EventPublisher;
@@ -35,9 +38,12 @@ class RequestSubmitterTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-09-06T10:00:00Z"), ZoneOffset.UTC);
     private RequestSubmitter submitter;
 
+    private static final String TRACE_ID = "0af7651916cd43dd8448eb211c80319c";
+
     @BeforeEach
     void setUp() {
         when(trace.current()).thenReturn(Optional.empty());
+        when(trace.traceId()).thenReturn(Optional.of(TRACE_ID));
         when(trace.admission(any(), any())).thenAnswer(inv -> inv.<Supplier<Object>>getArgument(1).get());
         submitter = new RequestSubmitter(applier, publisher, clock, trace);
     }
@@ -70,9 +76,7 @@ class RequestSubmitterTest {
 
     @Test
     void appliesWithTheActorAnnotationAndPublishesProvisionRequest() {
-        GenericKubernetesResource applied = manifest("DatabaseClaim", "team-checkout", "checkout-db");
-        applied.getMetadata().setResourceVersion("4711");
-        when(applier.apply(any(), any())).thenReturn(applied);
+        when(applier.apply(any(), any())).thenReturn(manifest("DatabaseClaim", "team-checkout", "checkout-db"));
 
         RequestSubmitter.Accepted accepted = submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
 
@@ -94,7 +98,31 @@ class RequestSubmitterTest {
         assertThat(e.timestamp()).isEqualTo(clock.instant());
         assertThat(accepted.resource()).isEqualTo(e.resource());
         assertThat(accepted.eventId()).isEqualTo(e.eventId())
-                .isEqualTo(RequestSubmitter.deterministicId("DatabaseClaim/team-checkout/checkout-db", "PROVISION_REQUEST", "4711"));
+                .isEqualTo(RequestSubmitter.deterministicId("DatabaseClaim/team-checkout/checkout-db", "PROVISION_REQUEST", TRACE_ID));
+    }
+
+    @Test
+    void theRequestIsAcknowledgedByKafkaBeforeItIsApplied() {
+        when(applier.apply(any(), any())).thenReturn(manifest("DatabaseClaim", "team-checkout", "checkout-db"));
+
+        submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+
+        InOrder order = inOrder(publisher, applier);
+        order.verify(publisher).publish(any());
+        order.verify(applier).apply(any(), any());
+    }
+
+    @Test
+    void aRetriedRequestCarriesTheSameIds() {
+        when(applier.apply(any(), any())).thenReturn(manifest("DatabaseClaim", "team-checkout", "checkout-db"));
+        RequestSubmitter.Accepted first = submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+        RequestSubmitter.Accepted again = submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+        assertThat(again.eventId()).isEqualTo(first.eventId());
+
+        when(trace.traceId()).thenReturn(Optional.empty());
+        RequestSubmitter.Accepted untraced = submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+        RequestSubmitter.Accepted untracedAgain = submitter.submit(manifest("DatabaseClaim", "team-checkout", "checkout-db"), "dev@company.com");
+        assertThat(untraced.eventId()).isNotEqualTo(first.eventId()).isNotEqualTo(untracedAgain.eventId());
     }
 
     @Test
@@ -111,10 +139,15 @@ class RequestSubmitterTest {
                 });
 
         ArgumentCaptor<WireEvent> event = ArgumentCaptor.forClass(WireEvent.class);
-        verify(publisher).publish(event.capture());
-        assertThat(event.getValue().action()).isEqualTo("POLICY_DENY");
-        assertThat(event.getValue().details()).startsWith("{\"outcome\":\"Denied\",\"reason\":\"admission webhook denied")
+        verify(publisher, times(2)).publish(event.capture());
+        WireEvent received = event.getAllValues().get(0);
+        WireEvent denied = event.getAllValues().get(1);
+        assertThat(received.action()).isEqualTo("PROVISION_REQUEST");
+        assertThat(denied.action()).isEqualTo("POLICY_DENY");
+        assertThat(denied.details()).startsWith("{\"outcome\":\"Denied\",\"reason\":\"admission webhook denied")
                 .contains("\"rule\":\"tags-required\"");
+        assertThat(denied.eventId()).isNotEqualTo(received.eventId())
+                .isEqualTo(RequestSubmitter.deterministicId("DatabaseClaim/team-checkout/bad", "POLICY_DENY", TRACE_ID));
     }
 
     @Test

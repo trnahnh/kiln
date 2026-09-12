@@ -318,9 +318,11 @@ class AuditServiceIT {
                 .body("{\"kind\":\"DatabaseClaim\",\"metadata\":{\"name\":\"bad\",\"namespace\":\"team-checkout\"},\"spec\":{}}")
                 .retrieve().toBodilessEntity());
         assertThat(denied).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
-        await().atMost(Duration.ofSeconds(60)).until(() -> rows() == before + 2);
+        // A denied request is Received, then Denied: the request row is acknowledged before the apply (ADR-0022).
+        await().atMost(Duration.ofSeconds(60)).until(() -> rows() == before + 3);
         Map<String, Object> deny = jdbc.queryForMap("select action, details::text as details from audit_entry order by seq desc limit 1");
         assertThat(deny).containsEntry("action", "POLICY_DENY");
+        assertThat(jdbc.queryForObject("select action from audit_entry order by seq desc limit 1 offset 1", String.class)).isEqualTo("PROVISION_REQUEST");
         assertThat((String) deny.get("details")).contains("tags-required");
 
         assertThat(status(() -> client().post().uri("/v1/requests")

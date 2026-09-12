@@ -92,26 +92,29 @@ public class RequestSubmitter {
         manifest.setMetadata(meta);
         String resource = manifest.getKind() + "/" + meta.getNamespace() + "/" + meta.getName();
 
+        // Ids derive from the request's trace, so a client retry after a timeout carries
+        // the same ids and the unique constraint absorbs it; the request is acknowledged
+        // by Kafka before the apply so no applied object can lack its row (ADR-0022).
+        String requestId = trace.traceId().orElseGet(() -> UUID.randomUUID().toString());
+        UUID eventId = deterministicId(resource, ACTION_PROVISION_REQUEST, requestId);
+        publisher.publish(new WireEvent(eventId, subject, ACTION_PROVISION_REQUEST, resource, clock.instant(),
+                details(Map.of("outcome", "Received", "kind", manifest.getKind()))));
         try {
-            GenericKubernetesResource applied = trace.admission(resource, () -> applier.apply(context, manifest));
-            String version = applied.getMetadata() == null ? "" : firstNonBlank(applied.getMetadata().getResourceVersion(), applied.getMetadata().getUid());
-            UUID eventId = deterministicId(resource, ACTION_PROVISION_REQUEST, version);
-            publisher.publish(new WireEvent(eventId, subject, ACTION_PROVISION_REQUEST, resource, clock.instant(),
-                    details(Map.of("outcome", "Received", "kind", manifest.getKind()))));
+            trace.admission(resource, () -> applier.apply(context, manifest));
             return new Accepted(resource, eventId);
         } catch (AdmissionRejectedException e) {
             String reason = e.getMessage() == null ? "admission rejected the request" : e.getMessage();
             Matcher m = RULE.matcher(reason);
             String rule = m.find() ? m.group(1) : null;
-            UUID eventId = deterministicId(resource, ACTION_POLICY_DENY, String.valueOf(clock.instant().toEpochMilli()));
+            UUID denyId = deterministicId(resource, ACTION_POLICY_DENY, requestId);
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("outcome", "Denied");
             if (rule != null) {
                 details.put("rule", rule);
             }
             details.put("reason", reason);
-            publisher.publish(new WireEvent(eventId, subject, ACTION_POLICY_DENY, resource, clock.instant(), details(details)));
-            throw new DeniedException(new Denied(resource, eventId, rule, reason), e);
+            publisher.publish(new WireEvent(denyId, subject, ACTION_POLICY_DENY, resource, clock.instant(), details(details)));
+            throw new DeniedException(new Denied(resource, denyId, rule, reason), e);
         }
     }
 
@@ -155,13 +158,6 @@ public class RequestSubmitter {
             out[8 + i] = (byte) (lsb >>> (8 * (7 - i)));
         }
         return out;
-    }
-
-    private static String firstNonBlank(String a, String b) {
-        if (a != null && !a.isBlank()) {
-            return a;
-        }
-        return b == null ? "" : b;
     }
 
     private static ResourceDefinitionContext context(String group, String version, String kind, String plural) {

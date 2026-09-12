@@ -43,6 +43,11 @@ public class RequestTrace {
         return Optional.ofNullable(carrier.get(HEADER_TRACEPARENT));
     }
 
+    /** The trace id of the request being served, empty when nothing is traced. */
+    public Optional<String> traceId() {
+        return current().map(traceparent -> traceparent.split("-")[1]);
+    }
+
     /** Runs the admission step as a child span named after what was submitted. */
     public <T> T admission(String resource, Supplier<T> apply) {
         Span span = tracer.nextSpan().name("admission").tag("kiln.resource", Objects.requireNonNull(resource)).start();
