@@ -232,7 +232,7 @@ Every subsystem publishes to the Kafka topic `kiln.audit` (one partition, record
 
 | Field | Meaning |
 |---|---|
-| `eventId` | UUID. Publishers derive it deterministically (UUID v5) from the resource, action and the transition's own key, so a retried reconcile or a redelivered record carries the same id and is stored once. |
+| `eventId` | UUID. Publishers derive it deterministically (UUID v5) from the resource, action and the transition's own key, so a retried reconcile or a redelivered record carries the same id and is stored once. The REST path's key is the request's trace id (a fresh id when nothing is traced), so a client retry of the same request carries the same ids. |
 | `actor` | Who caused the action: the JWT subject on the REST path, the `platform.internal/requested-by` annotation on a CR the service applied, otherwise `system:<controller>`. |
 | `action` | One of the table below. |
 | `resource` | `<Kind>/<namespace>/<name>`. |
@@ -255,13 +255,30 @@ Every subsystem publishes to the Kafka topic `kiln.audit` (one partition, record
 
 **Stored entry** (what `GET /v1/audit` returns): the wire event plus `seq`, `prevHash` and `hash`. The chain and the table are defined in [`DATA_MODEL.md`](DATA_MODEL.md). Verifying the chain means recomputing each entry's hash from its content plus `prevHash`, confirming it matches the stored `hash`, and confirming its `prevHash` equals the previous entry's `hash`.
 
+**Outbox** ([ADR-0022](decisions/0022-audit-events-are-committed-with-the-transition-and-drained-afterwards.md)): the operator, the delivery controller and the chaos controller commit each event in the CR's status before it is published, in the same status write as the transition it records, and clear it once Kafka has acknowledged the record. `TenantDatabase`, `CanaryRollout` and `ChaosExperiment` therefore carry:
+
+```yaml
+status:
+  audit:
+    pending:                  # oldest first; empty on a healthy cluster within one round trip to Kafka
+      - eventId: "6f1c2c1e-7d1e-5d0b-9a8e-3c1b7a4f2e10"
+        actor: "user@company.com"
+        action: PROVISION
+        resource: TenantDatabase/team-checkout/checkout-db
+        timestamp: "2026-09-04T18:00:00.000000Z"
+        details: '{"outcome":"Ready"}'   # the wire event's details as JSON text
+        headers: {traceparent: "00-...-...-01"}   # the publishing span, so the record joins the request's trace after a restart
+```
+
+A controller that restarts resumes delivery from this list. The gauge `kiln_audit_outbox_pending` on each controller's metrics endpoint counts what is committed and unacknowledged, and a CR whose list reaches 100 raises the Warning Event `AuditOutboxBacklog`. The scheduler's `SCHEDULE` event has no CR to hold and keeps the memory buffer of ADR-0017.
+
 ## Audit/RBAC service REST endpoints
 
 Roles are read from the JWT's `roles` claim (an array of strings).
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| `POST` | `/v1/requests` | Submit a `DatabaseClaim`, `CanaryRollout` or `ChaosExperiment` manifest (JSON body) on the caller's behalf: the service applies it, stamped `platform.internal/requested-by: <subject>` and `platform.internal/traceparent: <the request's W3C traceparent>`, and publishes `PROVISION_REQUEST`; an admission rejection publishes `POLICY_DENY` and returns `422` with `POLICY_DENIED` | Bearer JWT, `requests:submit` role |
+| `POST` | `/v1/requests` | Submit a `DatabaseClaim`, `CanaryRollout` or `ChaosExperiment` manifest (JSON body) on the caller's behalf: the service publishes `PROVISION_REQUEST` and waits for Kafka's acknowledgement, then applies the manifest stamped `platform.internal/requested-by: <subject>` and `platform.internal/traceparent: <the request's W3C traceparent>`; an admission rejection publishes `POLICY_DENY` and returns `422` with `POLICY_DENIED`, so a denied request is `Received`, then `Denied` | Bearer JWT, `requests:submit` role |
 | `GET` | `/v1/audit?actor=&resource=&from=&to=&limit=` | Query the audit trail by actor, resource, and time range, ordered by `seq`; `limit` defaults to 100, at most 1000 | Bearer JWT, `audit:read` role |
 | `GET` | `/v1/audit/verify` | Full hash-chain verification pass; `{"ok": true, "entries": n}` or `{"ok": false, "code": "AUDIT_CHAIN_BROKEN", "brokenLinks": [{"seq", "eventId", "reason"}]}` | Bearer JWT, `audit:admin` role |
 | `GET` | `/healthz` | Liveness probe | None |
