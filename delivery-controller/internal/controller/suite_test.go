@@ -21,6 +21,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/audit/outbox"
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
 	"github.com/trnahnh/kiln/slo"
@@ -101,13 +102,23 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
+	drainer, err := audit.NewDrainer(audit.DrainerOptions{
+		Deliverer: auditLog,
+		Store: outbox.Store[platformv1.CanaryRollout, *platformv1.CanaryRollout]{
+			Client: mgr.GetClient(),
+			List:   func(obj *platformv1.CanaryRollout) *[]audit.Pending { return &obj.Status.Audit.Pending },
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(mgr.Add(drainer)).To(Succeed())
+
 	reconciler := &CanaryRolloutReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("canaryrollout"),
 		Metrics:  source,
 		Router:   &mesh.Istio{Client: mgr.GetClient()},
-		Audit:    auditLog,
+		Outbox:   drainer,
 	}
 	Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 

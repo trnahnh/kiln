@@ -41,7 +41,7 @@ type TenantDatabaseReconciler struct {
 	Recorder record.EventRecorder
 	Commands Commands
 	Now      func() time.Time
-	Audit    audit.Publisher
+	Outbox   audit.Signaler
 	// SchedulerName places database pods through a named scheduler; empty leaves them to
 	// the default scheduler, which is what a cluster without kiln-scheduler needs.
 	SchedulerName string
@@ -88,6 +88,7 @@ func (r *TenantDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if statusErr := r.patchStatus(ctx, before, tdb); statusErr != nil {
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
+	r.signalOutbox(tdb)
 	return result, err
 }
 

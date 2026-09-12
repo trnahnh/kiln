@@ -54,7 +54,7 @@ type CanaryRolloutReconciler struct {
 	Metrics  slo.Source
 	Router   mesh.Router
 	Now      func() time.Time
-	Audit    audit.Publisher
+	Outbox   audit.Signaler
 
 	// Resource versions each status patch superseded. A reconcile queued by a watch event can
 	// run before the cache has the patched object; acting on that stale copy would repeat a
@@ -84,8 +84,11 @@ func (r *CanaryRolloutReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err == nil {
 			err = fmt.Errorf("updating status: %w", patchErr)
 		}
-	} else if cr.ResourceVersion != before.ResourceVersion {
-		r.superseded.Store(req.NamespacedName, before.ResourceVersion)
+	} else {
+		if cr.ResourceVersion != before.ResourceVersion {
+			r.superseded.Store(req.NamespacedName, before.ResourceVersion)
+		}
+		r.signalOutbox(cr)
 	}
 	return res, err
 }

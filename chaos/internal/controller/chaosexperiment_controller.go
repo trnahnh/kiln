@@ -46,7 +46,7 @@ type Reconciler struct {
 	Now      func() time.Time
 	// LeaseTTL overrides the computed lease lifetime; tests set it short.
 	LeaseTTL time.Duration
-	Audit    audit.Publisher
+	Outbox   audit.Signaler
 }
 
 func (r *Reconciler) lease(interval time.Duration) time.Duration {
@@ -71,8 +71,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	before := cr.DeepCopy()
 	res, err := r.reconcile(ctx, cr)
 	cr.Status.ObservedGeneration = cr.Generation
-	if patchErr := r.Status().Patch(ctx, cr, client.MergeFrom(before)); patchErr != nil && err == nil {
-		err = fmt.Errorf("updating status: %w", patchErr)
+	if patchErr := r.Status().Patch(ctx, cr, client.MergeFrom(before)); patchErr != nil {
+		if err == nil {
+			err = fmt.Errorf("updating status: %w", patchErr)
+		}
+	} else {
+		r.signalOutbox(cr)
 	}
 	return res, err
 }

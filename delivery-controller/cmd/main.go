@@ -23,6 +23,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/audit/outbox"
 	platformv1 "github.com/trnahnh/kiln/delivery-controller/api/v1"
 	"github.com/trnahnh/kiln/delivery-controller/internal/controller"
 	"github.com/trnahnh/kiln/delivery-controller/internal/mesh"
@@ -81,9 +82,9 @@ func main() {
 	}
 
 	recorder := mgr.GetEventRecorderFor("canaryrollout")
-	publisher, err := newPublisher(mgr, recorder, auditBrokers, auditTopic)
+	drainer, err := newOutbox(mgr, recorder, auditBrokers, auditTopic)
 	if err != nil {
-		setupLog.Error(err, "failed to start the audit publisher")
+		setupLog.Error(err, "failed to start the audit outbox")
 		os.Exit(1)
 	}
 
@@ -93,7 +94,7 @@ func main() {
 		Recorder: recorder,
 		Metrics:  slo.NewPrometheus(prometheusURL),
 		Router:   &mesh.Istio{Client: mgr.GetClient()},
-		Audit:    publisher,
+		Outbox:    drainer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "failed to create controller", "controller", "canaryrollout")
 		os.Exit(1)
@@ -115,36 +116,50 @@ func main() {
 	}
 }
 
-// newPublisher wires the non-blocking audit producer (ADR-0017); a dropped event surfaces
-// as a Warning Event on the CanaryRollout it was about.
-func newPublisher(mgr manager.Manager, recorder record.EventRecorder, brokers, topic string) (audit.Publisher, error) {
+// newOutbox wires the audit outbox (ADR-0022): the drainer delivers what each reconcile
+// committed in CanaryRollout status and clears it on the broker's acknowledgement. A backlog
+// past the threshold surfaces as a Warning Event on the CanaryRollout it belongs to.
+func newOutbox(mgr manager.Manager, recorder record.EventRecorder, brokers, topic string) (*audit.Drainer, error) {
+	var deliverer audit.Deliverer = audit.Discard{}
 	if brokers == "" {
 		setupLog.Info("audit publishing disabled: no --audit-brokers")
-		return audit.Discard{}, nil
+	} else {
+		pub, err := audit.NewKafka(audit.Options{
+			Brokers:    strings.Split(brokers, ","),
+			Topic:      topic,
+			Registerer: ctrlmetrics.Registry,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			<-ctx.Done()
+			flush, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			return pub.Close(flush)
+		})); err != nil {
+			return nil, err
+		}
+		deliverer = pub
 	}
-	pub, err := audit.NewKafka(audit.Options{
-		Brokers:    strings.Split(brokers, ","),
-		Topic:      topic,
+	drainer, err := audit.NewDrainer(audit.DrainerOptions{
+		Deliverer:  deliverer,
 		Registerer: ctrlmetrics.Registry,
-		OnFailure: func(e audit.Event, err error) {
-			parts := strings.SplitN(e.Resource, "/", 3)
-			if len(parts) != 3 {
-				return
-			}
-			obj := &platformv1.CanaryRollout{ObjectMeta: metav1.ObjectMeta{Namespace: parts[1], Name: parts[2]}}
-			recorder.Eventf(obj, corev1.EventTypeWarning, "AuditPublishFailed", "%s event not published: %v", e.Action, err)
+		Store: outbox.Store[platformv1.CanaryRollout, *platformv1.CanaryRollout]{
+			Client: mgr.GetClient(),
+			List:   func(obj *platformv1.CanaryRollout) *[]audit.Pending { return &obj.Status.Audit.Pending },
+		},
+		OnBacklog: func(key string, pending int) {
+			ns, name, _ := strings.Cut(key, "/")
+			obj := &platformv1.CanaryRollout{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
+			recorder.Eventf(obj, corev1.EventTypeWarning, "AuditOutboxBacklog", "%d audit events await Kafka", pending)
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		<-ctx.Done()
-		flush, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return pub.Close(flush)
-	})); err != nil {
+	if err := mgr.Add(drainer); err != nil {
 		return nil, err
 	}
-	return pub, nil
+	return drainer, nil
 }

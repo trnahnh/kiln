@@ -27,6 +27,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/audit/outbox"
 	platformv1 "github.com/trnahnh/kiln/chaos/api/v1"
 	"github.com/trnahnh/kiln/chaos/internal/agent"
 	"github.com/trnahnh/kiln/chaos/internal/fault"
@@ -183,12 +184,22 @@ var _ = BeforeSuite(func() {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme, Metrics: metricsserver.Options{BindAddress: "0"}})
 	Expect(err).NotTo(HaveOccurred())
 
+	drainer, err := audit.NewDrainer(audit.DrainerOptions{
+		Deliverer: auditLog,
+		Store: outbox.Store[platformv1.ChaosExperiment, *platformv1.ChaosExperiment]{
+			Client: mgr.GetClient(),
+			List:   func(obj *platformv1.ChaosExperiment) *[]audit.Pending { return &obj.Status.Audit.Pending },
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(mgr.Add(drainer)).To(Succeed())
+
 	Expect((&Reconciler{
 		Client:   mgr.GetClient(),
 		Recorder: mgr.GetEventRecorderFor("chaos-controller"),
 		Metrics:  source,
 		LeaseTTL: 1500 * time.Millisecond,
-		Audit:    auditLog,
+		Outbox:   drainer,
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	Expect((&agent.Reconciler{

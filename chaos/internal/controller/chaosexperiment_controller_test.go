@@ -114,7 +114,7 @@ var _ = Describe("ChaosExperiment", func() {
 		started := auditEvent(ns, "healthy", "Started")
 		Expect(started.Actor).To(Equal("system:chaos-controller"))
 		Expect(started.Details["faultType"]).To(Equal("latency-injection"))
-		Expect(started.Details["targets"]).To(Equal(2))
+		Expect(started.Details["targets"]).To(BeNumerically("==", 2), "details travel through the status as JSON, so numbers come back as float64")
 		completed := auditEvent(ns, "healthy", "Completed")
 		Expect(completed.Details["resilienceScore"]).To(Equal(*cr.Status.ResilienceScore))
 		Expect(completed.EventID).To(Equal(audit.DeterministicID(completed.Resource, audit.ActionChaosExperiment, "Completed", string(cr.UID))))

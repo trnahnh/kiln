@@ -25,6 +25,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/trnahnh/kiln/audit"
+	"github.com/trnahnh/kiln/audit/outbox"
 	platformv1 "github.com/trnahnh/kiln/operator/api/v1"
 )
 
@@ -98,12 +99,22 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
+	drainer, err := audit.NewDrainer(audit.DrainerOptions{
+		Deliverer: auditLog,
+		Store: outbox.Store[platformv1.TenantDatabase, *platformv1.TenantDatabase]{
+			Client: mgr.GetClient(),
+			List:   func(obj *platformv1.TenantDatabase) *[]audit.Pending { return &obj.Status.Audit.Pending },
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(mgr.Add(drainer)).To(Succeed())
+
 	reconciler := &TenantDatabaseReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tenantdatabase"),
 		Now:      testClock.Now,
-		Audit:    auditLog,
+		Outbox:   drainer,
 	}
 	Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 
