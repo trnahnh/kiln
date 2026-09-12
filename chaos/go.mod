@@ -9,7 +9,7 @@ require (
 	github.com/trnahnh/kiln/tracing v0.0.0
 	go.opentelemetry.io/otel v1.41.0
 	k8s.io/api v0.36.0
-	k8s.io/apimachinery v0.36.0
+	k8s.io/apimachinery v0.36.4
 	k8s.io/client-go v0.36.0
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	sigs.k8s.io/controller-runtime v0.24.1

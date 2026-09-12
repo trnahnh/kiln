@@ -90,6 +90,45 @@ spec:
             type: object
           status:
             properties:
+              audit:
+                description: |-
+                  AuditStatus holds the audit events committed with a transition until the broker has
+                  acknowledged them (ADR-0022).
+                properties:
+                  pending:
+                    items:
+                      description: |-
+                        Pending is an event committed in a CR's status, in the same write as the transition it
+                        records, until the broker has acknowledged it (ADR-0022). Details is the event's details
+                        as JSON text and Headers the W3C trace headers captured at the transition, so a record
+                        produced after a restart still joins the request's trace.
+                      properties:
+                        action:
+                          type: string
+                        actor:
+                          type: string
+                        details:
+                          type: string
+                        eventId:
+                          type: string
+                        headers:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        resource:
+                          type: string
+                        timestamp:
+                          type: string
+                      required:
+                      - action
+                      - actor
+                      - details
+                      - eventId
+                      - resource
+                      - timestamp
+                      type: object
+                    type: array
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"github.com/trnahnh/kiln/audit"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -207,7 +209,17 @@ type AnalysisState struct {
 	RecoveredAfter *int32 `json:"recoveredAfter,omitempty"`
 }
 
+// AuditStatus holds the audit events committed with a transition until the broker has
+// acknowledged them (ADR-0022).
+type AuditStatus struct {
+	// +optional
+	Pending []audit.Pending `json:"pending,omitempty"`
+}
+
 type ChaosExperimentStatus struct {
+	// +optional
+	Audit AuditStatus `json:"audit,omitzero"`
+
 	// +optional
 	Phase Phase `json:"phase,omitempty"`
 

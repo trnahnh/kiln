@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"github.com/trnahnh/kiln/audit"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -78,7 +80,17 @@ type TenantDatabaseSpec struct {
 	Tier Tier `json:"tier,omitempty"`
 }
 
+// AuditStatus holds the audit events committed with a transition until the broker has
+// acknowledged them (ADR-0022).
+type AuditStatus struct {
+	// +optional
+	Pending []audit.Pending `json:"pending,omitempty"`
+}
+
 type TenantDatabaseStatus struct {
+	// +optional
+	Audit AuditStatus `json:"audit,omitzero"`
+
 	// +optional
 	Phase Phase `json:"phase,omitempty"`
 
