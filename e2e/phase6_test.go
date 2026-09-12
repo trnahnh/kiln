@@ -369,6 +369,8 @@ func (h *auditHarness) testPolicyDeny(t *testing.T) {
 	g.Expect(code).To(Equal(422), "a claim over the storage ceiling must be denied at admission: %v", body)
 	g.Expect(body["code"]).To(Equal("POLICY_DENIED"))
 	g.Expect(h.get(gvkClaim, "too-big")).To(BeNil(), "a denied claim must not exist")
+	// The request is acknowledged before the apply, so a denial is Received, then Denied (ADR-0022).
+	h.expect("PROVISION_REQUEST", "Received", "DatabaseClaim/"+h.ns+"/too-big", auditSubject)
 	h.expect("POLICY_DENY", "Denied", "DatabaseClaim/"+h.ns+"/too-big", auditSubject)
 }
 
