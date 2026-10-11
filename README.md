@@ -50,8 +50,8 @@ Full problem writeup and the baseline this platform is measured against: [`docs/
 |---|---|---|
 | Operator | Provisions and lifecycle-manages per-tenant Postgres/Redis instances via a custom CRD | Go, kubebuilder, controller-runtime |
 | Provisioning / GitOps | Translates a request into real cloud resources, deployed declaratively through Git | Crossplane, ArgoCD, Terraform |
-| Policy | Validates every request against org rules before it reaches the operator | OPA, Kyverno |
-| Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing | Go, Kubernetes scheduler framework |
+| Policy | Fail-closed admission gate on the three request kinds (`DatabaseClaim`, `TenantDatabase`, `ChaosExperiment`): org rules are checked before anything is provisioned | OPA, Kyverno |
+| Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing; a class filter keeps latency-class placements off preemptible capacity | Go, Kubernetes scheduler framework |
 | Progressive delivery | Canary rollout with automatic, statistically-gated rollback | Go, Istio, Prometheus |
 | Chaos / resilience | On-demand controlled failure injection with an automated SLO-based score | Go, Istio/Prometheus, tc/iptables |
 | Audit / RBAC | Tamper-evident audit trail and access control in front of the whole platform | Java, Spring Boot, Kafka, PostgreSQL |
