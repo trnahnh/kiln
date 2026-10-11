@@ -678,12 +678,23 @@ func parallel(t *testing.T, ctx context.Context, n int, do func(i int) error) {
 // directories envtest gave them and killed by process id; a blanket kill by image name
 // would take down another test's control plane running alongside.
 func stopControlPlane(env *envtest.Environment) {
+	// Stop resets the directories it allocated, so the markers are taken first; an empty
+	// marker would match every process.
+	var markers []string
+	for _, dir := range []string{env.ControlPlane.APIServer.CertDir, env.ControlPlane.Etcd.DataDir} {
+		if base := filepath.Base(dir); strings.HasPrefix(base, "k8s_test_framework_") {
+			markers = append(markers, base)
+		}
+	}
 	err := env.Stop()
-	if err == nil || runtime.GOOS != "windows" {
+	if err == nil || runtime.GOOS != "windows" || len(markers) == 0 {
 		return
 	}
-	markers := []string{filepath.Base(env.ControlPlane.APIServer.CertDir), filepath.Base(env.ControlPlane.Etcd.DataDir)}
-	script := fmt.Sprintf(`Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'kube-apiserver.exe' -or $_.Name -eq 'etcd.exe') -and ($_.CommandLine -like '*%s*' -or $_.CommandLine -like '*%s*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, markers[0], markers[1])
+	var clauses []string
+	for _, m := range markers {
+		clauses = append(clauses, fmt.Sprintf("$_.CommandLine -like '*%s*'", m))
+	}
+	script := fmt.Sprintf(`Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'kube-apiserver.exe' -or $_.Name -eq 'etcd.exe') -and (%s) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, strings.Join(clauses, " -or "))
 	_ = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Run()
 }
 

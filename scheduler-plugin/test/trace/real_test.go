@@ -5,6 +5,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,14 +146,25 @@ func TestGoogleTraceRealScheduler(t *testing.T) {
 			rows = append(rows, fmt.Sprintf("| %s | %s (binary) | %.2f | %+.1f%% | %.1f | %.1f | %d | %d | %d | %.1f%% | %.0f | %d | %d | %s | %s |",
 				label, profile, r.dollars, 100*(r.dollars-baseline)/baseline, r.hoursOnDemand, r.hoursSpot, r.machinesTouched, r.violations, r.unplaced, 100*r.meanUtil, r.perSecond, r.rejected, r.retried, r.wall.Round(time.Second), span))
 			t.Logf("%s / %s: %+v", label, profile, r)
+			writeRealReport(t, rows)
 		}
 	}
-	table := "| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s | Unschedulable verdicts | Tasks retried | Wall time | Span |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n"
-	t.Log("\n" + table)
-	if path := os.Getenv("KILN_TRACE_REAL_REPORT"); path != "" {
-		if err := os.WriteFile(path, []byte(table), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	t.Log("\n" + realTable(rows))
+}
+
+func realTable(rows []string) string {
+	return "| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s | Unschedulable verdicts | Tasks retried | Wall time | Span |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n"
+}
+
+// writeRealReport rewrites the report after every run, so the rows that finished survive
+// a later run's failure.
+func writeRealReport(t *testing.T, rows []string) {
+	path := os.Getenv("KILN_TRACE_REAL_REPORT")
+	if path == "" {
+		return
+	}
+	if err := os.WriteFile(path, []byte(realTable(rows)), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -168,6 +180,15 @@ func startAPIServer(t *testing.T) (*kubernetes.Clientset, string, func()) {
 	if dir := firstEnvtestBinaryDir(); dir != "" && os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		env.BinaryAssetsDirectory = dir
 	}
+	env.ControlPlane.Etcd = &envtest.Etcd{}
+	env.ControlPlane.APIServer = &envtest.APIServer{}
+	if dir := os.Getenv("KILN_TRACE_REAL_CONTROL_PLANE_LOGS"); dir != "" {
+		env.ControlPlane.Etcd.Err = controlPlaneLog(t, dir, "etcd")
+		env.ControlPlane.APIServer.Err = controlPlaneLog(t, dir, "kube-apiserver")
+	}
+	// The scheduler records an Event per binding; with the default hour of retention the
+	// API server's periodic object count over 100k Events stalled etcd for ten seconds.
+	env.ControlPlane.APIServer.Configure().Append("event-ttl", "1m")
 	cfg, err := env.Start()
 	if err != nil {
 		t.Fatalf("start envtest: %v", err)
@@ -186,13 +207,41 @@ func startAPIServer(t *testing.T) (*kubernetes.Clientset, string, func()) {
 	if err := clientcmd.WriteToFile(*kc, kubeconfig); err != nil {
 		t.Fatal(err)
 	}
-	stop := func() {
-		if err := env.Stop(); err != nil && runtime.GOOS == "windows" {
-			// envtest stops its control plane with SIGTERM, which Windows lacks.
-			_ = exec.Command("taskkill", "/F", "/IM", "kube-apiserver.exe", "/IM", "etcd.exe").Run()
+	return cs, kubeconfig, func() { stopControlPlane(env) }
+}
+
+// stopControlPlane stops this test's own kube-apiserver and etcd. envtest signals them
+// with SIGTERM, which Windows lacks, so there they are found by the temporary
+// directories envtest gave them and killed by process id; a blanket kill by image name
+// would take down another test's control plane running alongside.
+func stopControlPlane(env *envtest.Environment) {
+	// Stop resets the directories it allocated, so the markers are taken first; an empty
+	// marker would match every process.
+	var markers []string
+	for _, dir := range []string{env.ControlPlane.APIServer.CertDir, env.ControlPlane.Etcd.DataDir} {
+		if base := filepath.Base(dir); strings.HasPrefix(base, "k8s_test_framework_") {
+			markers = append(markers, base)
 		}
 	}
-	return cs, kubeconfig, stop
+	err := env.Stop()
+	if err == nil || runtime.GOOS != "windows" || len(markers) == 0 {
+		return
+	}
+	var clauses []string
+	for _, m := range markers {
+		clauses = append(clauses, fmt.Sprintf("$_.CommandLine -like '*%s*'", m))
+	}
+	script := fmt.Sprintf(`Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'kube-apiserver.exe' -or $_.Name -eq 'etcd.exe') -and (%s) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, strings.Join(clauses, " -or "))
+	_ = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Run()
+}
+
+func controlPlaneLog(t *testing.T, dir, name string) io.Writer {
+	f, err := os.Create(filepath.Join(dir, name+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
 }
 
 // Lets `go test` find the binaries without KUBEBUILDER_ASSETS after `make setup-envtest`.
@@ -246,8 +295,12 @@ func createTraceNodes(t *testing.T, ctx context.Context, cs *kubernetes.Clientse
 			labels[pricing.LabelPreemptionRisk] = fmt.Sprintf("%.2f", m.node.Economics.PreemptionRisk)
 		}
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName(m.id), Labels: labels}}
-		created, err := cs.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
-		if err != nil {
+		var created *corev1.Node
+		if err := retrying(ctx, func() error {
+			var err error
+			created, err = cs.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
+			return err
+		}); err != nil {
 			return err
 		}
 		capacity := corev1.ResourceList{
@@ -275,6 +328,23 @@ func createTraceNodes(t *testing.T, ctx context.Context, cs *kubernetes.Clientse
 	})
 	t.Logf("registered %d nodes in %s", len(c.machines), time.Since(wall).Round(time.Second))
 	return byName
+}
+
+// retrying repeats a call on the errors a busy control plane returns for a moment, a
+// timeout or an unavailable etcd, so a stall does not end a run of many minutes.
+func retrying(ctx context.Context, do func() error) error {
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		if err = do(); err == nil || ctx.Err() != nil {
+			return err
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "timed out") && !strings.Contains(msg, "Unavailable") && !strings.Contains(msg, "timeout") && !strings.Contains(msg, "too many requests") {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return err
 }
 
 func parallel(t *testing.T, ctx context.Context, n int, do func(i int) error) {
@@ -468,7 +538,7 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 			}
 			pod := tracePod(podNameOf(p, 0), profile, p)
 			pod.Spec.NodeName = nodeName(m.id)
-			if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+			if err := retrying(ctx, func() error { _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); return err }); err != nil {
 				return err
 			}
 			placed[i] = true
@@ -491,11 +561,13 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 		parallel(t, ctx, len(departed), func(i int) error {
 			name := names[departed[i].p.key]
 			waits[i] = vs.expect(name)
-			err := pods.Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: ptr.To[int64](0)})
-			if err != nil && !strings.Contains(err.Error(), "not found") {
+			return retrying(ctx, func() error {
+				err := pods.Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: ptr.To[int64](0)})
+				if err != nil && strings.Contains(err.Error(), "not found") {
+					return nil
+				}
 				return err
-			}
-			return nil
+			})
 		})
 		for _, w := range waits {
 			select {
@@ -513,8 +585,13 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 			p := batch[i]
 			name := podNameOf(p, attempts[p.key])
 			waits[i] = vs.expect(name)
-			_, err := pods.Create(ctx, tracePod(name, profile, p), metav1.CreateOptions{})
-			return err
+			return retrying(ctx, func() error {
+				_, err := pods.Create(ctx, tracePod(name, profile, p), metav1.CreateOptions{})
+				if err != nil && strings.Contains(err.Error(), "already exists") {
+					return nil
+				}
+				return err
+			})
 		})
 		var rejected []placement
 		for i, w := range waits {
