@@ -34,3 +34,6 @@ validation-results.md
 .film/
 .web-*.log
 .pnpm-install.log
+
+# Public trace sample fetched by hack/google-trace.sh
+scheduler-plugin/test/trace/data/

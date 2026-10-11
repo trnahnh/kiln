@@ -37,3 +37,7 @@ setup-envtest: $(ENVTEST)
 $(ENVTEST):
 	mkdir -p "$(LOCALBIN)"
 	GOBIN="$(LOCALBIN)" go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
+
+.PHONY: trace
+trace: ## Replay the Google 2011 cluster trace sample through the placement model (TESTING.md); fetch it with hack/google-trace.sh.
+	KILN_TRACE_DIR="$${KILN_TRACE_DIR:-$(shell pwd)/test/trace/data}" go test -tags=trace ./test/trace/ -run TestGoogleTraceReplay -v -count=1 -timeout 30m
