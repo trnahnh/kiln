@@ -32,6 +32,87 @@ The output of this plan is also the Phase 7 demo script (see [`ROADMAP.md`](ROAD
 
 Baselines cited from external platform-engineering research (not measured on a real org) are stated as approximations, not internal measurements. The relative improvement claimed by each target still holds even if the absolute baseline shifts, since the comparison is against the measurement method, not a single external number.
 
+## Service level objectives
+
+The targets above are exit criteria: thresholds a phase had to clear once. An SLO is a promise kept over a window, with a budget for breaking it. The objectives below are proposed from the validation evidence, not yet monitored over a real window; each names its indicator's source so that the first real window can be measured the same way the validation was. The policy is the usual one: a subsystem whose budget is spent in the window takes no feature change until the budget is back, and the exhaustion is a postmortem.
+
+| Objective | Indicator (source) | Window and budget | Evidence so far |
+|---|---|---|---|
+| 95% of standard Postgres claims reach `Ready` within 60 s of the request being accepted | `PROVISION_REQUEST` to `PROVISION Ready` audit rows, equivalently the `kiln_tenantdatabase_time_to_ready_seconds` histogram | 28 days; 5% of claims | p95 16 s, n=10, plus the traced claim at 6.94 s (validation results below) |
+| 100% of claims that violate an org rule are denied before anything is composed | `POLICY_DENY` rows versus objects on the cluster | an invariant, no budget: a single miss is an incident | 1/1 denied in the simulated week, every violation class denied in `TestPhase2` |
+| A regression of at least twice the error-rate limit is rolled back within 3 minutes of its onset in 90% of rollouts | `DEPLOY Started` to `ROLLBACK` rows, paired by template hash, against the onset in the canary's own metrics | 28 days; 10% of real regressions | simulation p95 2m30s for the 2x step, 0 of 1000 missed; the one injected 30% regression on the cluster rolled back in 50 s |
+| No more than 5% of healthy rollouts are rolled back | `ROLLBACK` rows whose canary never breached its limits over a window, judged after the fact from Prometheus | 28 days; 5% of healthy rollouts | simulation worst class 2.8%; 0 of 29 healthy deploys rolled back on the cluster |
+| A chaos experiment that breaches its SLO has every fault removed from the node within 60 s of the breach | `CHAOS_EXPERIMENT Aborted` row and the `iptables`/`tc` state on the node | an invariant, no budget | abort 25 s after the fault went live, rule gone 1 s after the row |
+| 99% of audit queries over an actor and time range return within 1 s with the same count `psql` gives | client round trip of `GET /v1/audit` and the psql cross-check | 28 days; 1% of queries | p95 108 ms, n=10, every count matching |
+| Every audited transition has exactly one audit row | informer-observed transitions versus rows, and the chain verification | an invariant, no budget | proven for the simulated week (201 rows, 0 publish failures); the under-crash proof (Phase 8) has not yet passed in CI, see `docs/postmortems/2026-10-10-nightly-red-for-29-days.md` |
+
+## Detector comparison
+
+The canary decision ([ADR-0014](decisions/0014-sequential-probability-ratio-test-decides-rollback.md)) against the two rules a canary controller usually ships with, on the simulation suite's traffic models and seeds (method in [`TESTING.md`](TESTING.md#progressive-delivery-controller)): a per-window threshold that rolls back after N consecutive breaches, the shape of Flagger's and Argo Rollouts' metric checks, and a multi-window multi-burn-rate alert on the error budget, the shape of the SRE Workbook's alerting chapter. The alternatives are tuned in-sample on these classes, the sequential test is not; both alternatives drive a fixed schedule of four one-minute steps. Produced by `go test ./internal/analysis -run TestDetectorComparison` in `delivery-controller/` on 2026-10-10, verbatim:
+
+| Detector | Tuning | Worst false rollback (healthy/noisy) | step to 30%: detect p50 / p95, missed | step to 2% (the H1 rate): detect p50 / p95, missed | ramp 0.5% to 3% over 8 windows: detect p50 / p95, missed | latency tail 5%: detect p50 / p95, missed |
+|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | ADR-0014 defaults | 2.8% | 30s / 30s, 0.0% | 1m15s / 2m30s, 0.0% | 1m45s / 2m0s, 0.0% | 30s / 45s, 0.0% |
+| threshold, N consecutive breaches | limit x1.5, 4 consecutive | 2.0% | 45s / 45s, 0.0% | 1m15s / 2m45s, 6.6% | 1m45s / 2m30s, 0.0% | 45s / 45s, 0.0% |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | 1.8% | 15s / 15s, 0.0% | 3m0s / 3m0s, 2.0% | 3m0s / 3m0s, 0.0% | 3m0s / 3m0s, 0.0% |
+
+Per-class false rollback for each row (for a regression class, rollbacks before its onset):
+
+| Detector | Tuning | healthy clean | healthy half of the limit | noisy steady at 90% of the limit | noisy bursty, long-run 80% of the limit | noisy one window at 10x the limit | step to 30% | step to 2% (the H1 rate) | ramp 0.5% to 3% over 8 windows | latency tail 5% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | ADR-0014 defaults | 0.0% | 0.0% | 0.4% | 2.8% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| threshold, N consecutive breaches | limit x1.5, 4 consecutive | 0.0% | 0.0% | 2.0% | 0.8% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | 0.0% | 0.0% | 0.0% | 1.8% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+
+**Reading the table.**
+
+- **At equal false-rollback cost, the sequential test is the only rule that catches every regression class within the rollout.** Its worst false-rollback rate, 2.8% on bursty traffic, is the ceiling the others are tuned to. The consecutive-breach threshold tuned to 2.0% matches it on the subtle 2x step at the median (1m15s) but misses 6.6% of those rollouts and is 15 s slower on the flagrant ones; the burn-rate alert tuned to 1.8% is the fastest on the flagrant step (15 s, one window) and the slowest on everything subtle (3 minutes, its longest window), because a 2x regression is a 2x burn and only its 1x window can see it.
+- **The sweep shows why.** For the threshold rule, each step of N trades false rollbacks for misses at the limit: N=3 gives 8.0% false rollbacks, N=4 2.0% with 6.6% missed, N=5 0.1% with 18.9% missed. For the burn-rate rule the scale factor does the same: 1.0x gives 16.2% false rollbacks, 1.25x 1.8% with 2.0% missed, 1.5x 0.3% with 9.0% missed, 2x misses 80%. Neither rule has an operating point that is both under the ceiling and complete, because a fixed-window rule cannot accumulate evidence across windows; the CUSUM can. (`KILN_COMPARISON_SWEEP=1` logs every point.)
+- **What this does not show.** All three rules see the same synthetic traffic: independent requests at a fixed rate with Bernoulli failures, bursty only in the one class that draws each window's rate from a Beta distribution. Real traffic has diurnal rate, correlated failures and retries; the burn-rate alert's long windows are a strength against those that this model cannot credit. The comparison is of the decision rules, not of the products that ship them.
+
+## Public-trace replay
+
+The placement model on a public workload: the first 93.5 minutes of the Google 2011 cluster trace, 12,477 machines, 132,982 tasks already running when the trace starts and 57,012 new placements (521 production-priority, mapped to latency-sensitive; 42,626 standard; 13,865 free-tier, mapped to batch), replayed through the plugin's scoring function, through a least-allocated-plus-balanced model of the default profile, and through the machine the trace itself recorded for each task (method and every assumption in [`TESTING.md`](TESTING.md#scheduler-plugin)). Prices are synthetic: a seeded half of the machines is spot at the kind cluster's ratio; the trace has none. Produced by `make -C scheduler-plugin trace` on 2026-10-10, verbatim (placements per second is this laptop's wall clock, a 16-thread Ryzen 7 7735HS):
+
+| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| empty cluster | default scheduler (least-allocated + balanced) | 723.06 | +0.0% | 5153.2 | 5215.5 | 12403 | 249 | 0 | 5.9% | 74410 |
+| empty cluster | kiln-scheduler (cost-aware scoring) | 59.56 | -91.8% | 48.0 | 1870.1 | 2104 | 0 | 0 | 43.5% | 11466 |
+| empty cluster | trace's own placement (Borg) | 541.87 | -25.1% | 3904.1 | 4026.7 | 10340 | 253 | 63 | 9.5% | n/a |
+| cluster carrying the trace's running tasks | default scheduler (least-allocated + balanced) | 1329.75 | +0.0% | 9665.1 | 9781.8 | 2499 | 263 | 24305 | 92.3% | 326 |
+| cluster carrying the trace's running tasks | kiln-scheduler (cost-aware scoring) | 1329.75 | -0.0% | 9665.1 | 9781.6 | 2638 | 0 | 24362 | 93.2% | 280 |
+| cluster carrying the trace's running tasks | trace's own placement (Borg) | 1329.60 | -0.0% | 9665.1 | 9778.1 | 10340 | 253 | 63 | 115.1% | n/a |
+
+Sensitivity to the share of machines labelled spot (`KILN_TRACE_SPOT_FRACTION`):
+
+| Spot fraction | Scenario | Placement | Billed $ | vs default | Latency-class on spot |
+|---|---|---|---|---|---|
+| 0.25 | empty cluster | default scheduler (least-allocated + balanced) | 913.12 | +0.0% | 138 |
+| 0.25 | empty cluster | kiln-scheduler (cost-aware scoring) | 53.83 | -94.1% | 0 |
+| 0.25 | empty cluster | trace's own placement (Borg) | 688.23 | -24.6% | 121 |
+| 0.25 | cluster carrying the trace's running tasks | default scheduler (least-allocated + balanced) | 1681.78 | +0.0% | 148 |
+| 0.25 | cluster carrying the trace's running tasks | kiln-scheduler (cost-aware scoring) | 1681.77 | -0.0% | 0 |
+| 0.25 | cluster carrying the trace's running tasks | trace's own placement (Borg) | 1681.63 | -0.0% | 121 |
+| 0.5 | empty cluster | default scheduler (least-allocated + balanced) | 723.06 | +0.0% | 249 |
+| 0.5 | empty cluster | kiln-scheduler (cost-aware scoring) | 59.56 | -91.8% | 0 |
+| 0.5 | empty cluster | trace's own placement (Borg) | 541.87 | -25.1% | 253 |
+| 0.5 | cluster carrying the trace's running tasks | default scheduler (least-allocated + balanced) | 1329.75 | +0.0% | 263 |
+| 0.5 | cluster carrying the trace's running tasks | kiln-scheduler (cost-aware scoring) | 1329.75 | -0.0% | 0 |
+| 0.5 | cluster carrying the trace's running tasks | trace's own placement (Borg) | 1329.60 | -0.0% | 253 |
+| 0.75 | empty cluster | default scheduler (least-allocated + balanced) | 525.92 | +0.0% | 384 |
+| 0.75 | empty cluster | kiln-scheduler (cost-aware scoring) | 62.05 | -88.2% | 0 |
+| 0.75 | empty cluster | trace's own placement (Borg) | 396.42 | -24.6% | 379 |
+| 0.75 | cluster carrying the trace's running tasks | default scheduler (least-allocated + balanced) | 969.22 | +0.0% | 362 |
+| 0.75 | cluster carrying the trace's running tasks | kiln-scheduler (cost-aware scoring) | 969.21 | -0.0% | 0 |
+| 0.75 | cluster carrying the trace's running tasks | trace's own placement (Borg) | 969.07 | -0.0% | 379 |
+
+**Reading the table.**
+
+- **On an empty cluster the node-occupancy rule hands the packing strategy an 88 to 94% saving.** That is the same artefact the kind replay's 45.5% carries: a machine bills only while it hosts a task, the default model spreads 57,012 tasks over 12,403 machines at 6% requested utilisation, the cost-aware score packs them onto about 2,100 at 43%. It is an upper bound for a fleet whose idle machines are released the moment they empty. The trace's own placement spreads too (10,340 machines), because Borg was placing onto a cluster that was already full.
+- **On the cluster as the trace found it, the saving is zero.** With the running tasks loaded on their recorded machines the cluster is 92% requested; no machine ever empties, so every strategy bills the same to within a dollar, and 42% of the arrivals find no room under request accounting, for every strategy alike (Borg schedules on usage and overcommits, which this model does not). Placement alone saves nothing when nothing can be released; the money is in how much capacity consolidation can hand back, which is the fleet manager's job, not the scheduler's.
+- **What holds in every scenario is the class guarantee.** Zero production-priority tasks on reclaimable capacity for the cost-aware placement, against 138 to 384 for the default model and 121 to 379 for the trace's own placement under the same labels, at every spot fraction. The latter two are not a critique of Borg or of the default scheduler, which know nothing of these labels; they show what any economics-blind placement does once reclaimable capacity exists.
+- **Throughput.** On the empty cluster the cost-aware scoring places about 10,000 to 11,500 tasks per second with the 5% candidate sample, the simpler default model 40,000 to 74,000; the pure score is 87 ns per node with no allocations (`BenchmarkScore`). When almost nothing fits, both fall to a few hundred per second because the candidate scan walks all 12,477 machines before giving up; a real scheduler would hit the same wall and queue the pod. None of this is a measurement of the scheduler binary, which the envtest benchmark in `TESTING.md` covers.
+
 ## Validation results
 
 The plan above ran as `TestPhase7Validation` (`e2e/phase7_test.go`, `e2e/phase7_sim_test.go`) in CI run [34085396203](https://github.com/trnahnh/kiln/actions/runs/34085396203) on commit `78e0a2a`, on a fresh five-node kind cluster after `TestPhase2` through `TestPhase6` had passed on the same cluster in the same job. The table below is the run's `validation-results` artifact, verbatim.
