@@ -134,13 +134,22 @@ type runResult struct {
 }
 
 func simulate(cfg Config, model trafficModel, seed uint64) runResult {
+	return simulateWith(cfg, model, constantRPS, seed)
+}
+
+// rateModel yields the total request rate offered at the tick with the given index.
+type rateModel func(tick int) float64
+
+func constantRPS(int) float64 { return simTotalRPS }
+
+func simulateWith(cfg Config, model trafficModel, rps rateModel, seed uint64) runResult {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	st := Start(cfg, t0)
 	now := t0
 	for tick := 1; tick <= simMaxTicks; tick++ {
 		now = now.Add(simTick)
 		pErr, pSlow := model(rng, tick)
-		n := poisson(rng, simTotalRPS*float64(st.Weight)/100*simTick.Seconds())
+		n := poisson(rng, rps(tick)*float64(st.Weight)/100*simTick.Seconds())
 		s := Sample{Requests: n, Errors: binomial(rng, n, pErr), Slow: binomial(rng, n, pSlow)}
 		d := Tick(cfg, &st, now, s, true)
 		if d.Action == Promote || d.Action == Rollback {

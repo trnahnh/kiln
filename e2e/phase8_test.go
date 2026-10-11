@@ -39,6 +39,11 @@ const (
 	outboxDatabases  = 6
 	outboxKillEvery  = 40 * time.Second
 	outboxSettleWait = 4 * time.Minute
+	// Five rounds of the cadence deliver three hard and two graceful kills; the bound
+	// leaves room for a slow pod deletion in each.
+	outboxMinHardKills = 3
+	outboxMinSoftKills = 2
+	outboxKillsWait    = 6 * outboxKillEvery
 )
 
 var outboxKinds = []schema.GroupVersionResource{
@@ -172,6 +177,21 @@ func (k *controllerKiller) run(stop <-chan struct{}) {
 	}
 }
 
+// enoughKills is the precondition the proof needs: every controller lost its pod without
+// grace at least outboxMinHardKills times and gracefully at least outboxMinSoftKills times.
+// A burst that finishes faster than the cadence delivers them is not evidence either way,
+// so the killer keeps going until this holds (postmortem 2026-10-10).
+func (k *controllerKiller) enoughKills() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, target := range outboxControllers {
+		if k.hard[target.Name] < outboxMinHardKills || k.kills[target.Name]-k.hard[target.Name] < outboxMinSoftKills {
+			return false
+		}
+	}
+	return true
+}
+
 func (k *controllerKiller) kill(target types.NamespacedName, hard bool) {
 	dep := &appsv1.Deployment{}
 	if err := k.c.Get(k.ctx, target, dep); err != nil {
@@ -269,12 +289,9 @@ func TestPhase8Outbox(t *testing.T) {
 			t.Logf("experiment ended %s: %s", ch.phase("podkill"), ch.describe("podkill"))
 		})
 	})
+	g.Eventually(killer.enoughKills, outboxKillsWait, poll).Should(BeTrue(), "every controller must be killed without grace at least %d times and gracefully at least %d times", outboxMinHardKills, outboxMinSoftKills)
 	close(stopKilling)
 	<-killerDone
-	for _, target := range outboxControllers {
-		g.Expect(killer.hard[target.Name]).To(BeNumerically(">=", 3), "%s must have been killed without grace several times, got %d", target.Name, killer.hard[target.Name])
-		g.Expect(killer.kills[target.Name]-killer.hard[target.Name]).To(BeNumerically(">=", 2), "%s must also have been deleted gracefully", target.Name)
-	}
 	t.Logf("kills per controller: %v (grace 0: %v)", killer.kills, killer.hard)
 
 	t.Run("every controller comes back and every outbox drains", func(t *testing.T) {

@@ -195,3 +195,36 @@ jobs:
           name: validation-results
           path: validation-results.md
           if-no-files-found: ignore
+
+  # A scheduled run's failure notifies nobody by default; a red nightly sat unseen for 29
+  # days (docs/postmortems/2026-10-10-nightly-red-for-29-days.md). This opens one issue per
+  # red nightly, or comments on the open one, so the streak is a visible event.
+  nightly-alert:
+    if: failure() && github.event_name == 'schedule'
+    needs:
+      - operator-unit
+      - scheduler-unit
+      - scheduler-perf
+      - delivery-unit
+      - chaos-unit
+      - gitops-unit
+      - audit-unit
+      - audit-integration
+      - operator-integration
+      - platform-e2e
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - run: |
+          title="nightly ci is red"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number')"
+          body="Nightly run failed on \`${GITHUB_SHA::7}\`: $RUN_URL"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

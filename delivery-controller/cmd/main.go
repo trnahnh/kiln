@@ -44,7 +44,15 @@ func init() {
 func main() {
 	var metricsAddr, probeAddr, prometheusURL, auditBrokers, auditTopic, otlpEndpoint string
 	var enableLeaderElection bool
+	var apiQPS float64
+	var apiBurst, workers int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to; 0 disables it.")
+	// The scale benchmark (TESTING.md) found controller-runtime's 20 qps client budget the
+	// first limit at a few hundred concurrent rollouts: every analysis tick is a status
+	// write, and one worker cannot spend more budget than it is given.
+	flag.Float64Var(&apiQPS, "kube-api-qps", 100, "Requests per second the controller may send to the API server before client-side throttling.")
+	flag.IntVar(&apiBurst, "kube-api-burst", 200, "Burst allowance above --kube-api-qps.")
+	flag.IntVar(&workers, "concurrent-reconciles", 8, "Rollouts reconciled at once.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the probe endpoint binds to.")
 	flag.StringVar(&prometheusURL, "prometheus-url", "http://prometheus.monitoring.svc:9090", "Prometheus base URL the analysis reads canary metrics from.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election so only one manager reconciles.")
@@ -69,7 +77,9 @@ func main() {
 	}()
 
 	// Plain HTTP metrics: Prometheus scrapes by pod annotation (ADR-0001).
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	cfg.QPS, cfg.Burst = float32(apiQPS), apiBurst
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
@@ -94,7 +104,8 @@ func main() {
 		Recorder: recorder,
 		Metrics:  slo.NewPrometheus(prometheusURL),
 		Router:   &mesh.Istio{Client: mgr.GetClient()},
-		Outbox:    drainer,
+		Outbox:   drainer,
+		Workers:  workers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "failed to create controller", "controller", "canaryrollout")
 		os.Exit(1)

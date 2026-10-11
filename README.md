@@ -50,8 +50,8 @@ Full problem writeup and the baseline this platform is measured against: [`docs/
 |---|---|---|
 | Operator | Provisions and lifecycle-manages per-tenant Postgres/Redis instances via a custom CRD | Go, kubebuilder, controller-runtime |
 | Provisioning / GitOps | Translates a request into real cloud resources, deployed declaratively through Git | Crossplane, ArgoCD, Terraform |
-| Policy | Validates every request against org rules before it reaches the operator | OPA, Kyverno |
-| Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing | Go, Kubernetes scheduler framework |
+| Policy | Fail-closed admission gate on the three request kinds (`DatabaseClaim`, `TenantDatabase`, `ChaosExperiment`): org rules are checked before anything is provisioned | OPA, Kyverno |
+| Scheduler plugin | Places pods with cost/fragmentation-aware scoring instead of default bin packing; a class filter keeps latency-class placements off preemptible capacity | Go, Kubernetes scheduler framework |
 | Progressive delivery | Canary rollout with automatic, statistically-gated rollback | Go, Istio, Prometheus |
 | Chaos / resilience | On-demand controlled failure injection with an automated SLO-based score | Go, Istio/Prometheus, tc/iptables |
 | Audit / RBAC | Tamper-evident audit trail and access control in front of the whole platform | Java, Spring Boot, Kafka, PostgreSQL |
@@ -229,6 +229,7 @@ ArgoCD reports the Application OutOfSync while the local CRD differs from Git; t
 | [docs/ROADMAP.md](./docs/ROADMAP.md) | Build phases and the exit criterion each one is gated on |
 | [docs/TESTING.md](./docs/TESTING.md) | Testing approach per subsystem, and how to run each suite |
 | [docs/decisions/](./docs/decisions/) | ADRs for every design decision, immutable once accepted |
+| [docs/postmortems/](./docs/postmortems/) | Blameless postmortems of the project's own failures |
 | [web/README.md](./web/README.md) | The landing page: the drawing, where its numbers come from, how it is verified |
 
 ---
@@ -250,7 +251,32 @@ Correctness claims are verified against independent ground truth, meaning actual
 
 Phases 0 through 7 have met their exit criteria. The final validation ran the whole platform as one synthetic week of developer requests on a fresh five-node cluster; the resulting comparison table against the baselines, and the CI run that produced it, are in [`docs/METRICS.md`](docs/METRICS.md#validation-results).
 
+Phase 8 (the durable audit outbox) is built and proven under `envtest`, but its end-to-end proof has not yet passed in CI: a harness bug kept the nightly red for 29 days before it was found, and the fix awaits its first `main` run. The account is in [`docs/postmortems/`](docs/postmortems/2026-10-10-nightly-red-for-29-days.md).
+
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase tracker and what each phase had to prove.
+
+## Reproducing the numbers
+
+Every figure quoted in this repository comes from a command. The ones that need no cluster run in seconds to minutes on a laptop:
+
+```bash
+# Canary decision: 1000 seeded rollouts per traffic class, false-rollback and miss rates,
+# detection latency (docs/TESTING.md, "Progressive delivery controller")
+cd delivery-controller && go test ./internal/analysis -run Simulated -v -count=1
+
+# The same decision against a consecutive-breach threshold and a multi-window burn-rate
+# alert at equal false-rollback cost (docs/METRICS.md, "Detector comparison")
+cd delivery-controller && KILN_COMPARISON_REPORT=/tmp/comparison.md go test ./internal/analysis -run TestDetectorComparison -count=1
+
+# The placement model on the public Google 2011 cluster trace, 12,477 machines
+# (docs/METRICS.md, "Public-trace replay"); the fetch is 4.5 MB and checksum-verified
+bash hack/google-trace.sh && make -C scheduler-plugin trace
+KILN_TRACE_REAL_SCENARIOS=empty make -C scheduler-plugin trace-real                          # the scheduler binary on the same trace, about 7 minutes
+cd delivery-controller && KILN_HOLDOUT_REPORT=holdout.md go test ./internal/analysis -run TestDetectorHoldout -count=1   # held-out detector evaluation, a few minutes
+cd delivery-controller && KILN_SCALE_ROLLOUTS=500,1000 KILN_SCALE_REPORT=scale.md go test -tags=scale ./test/scale/ -run TestCanaryRolloutScale -count=1 -timeout 120m   # controller scale, as shipped
+```
+
+The cluster-backed figures (provisioning, rollback and abort timings, the kind scheduler replay, the simulated week) come from the `platform-e2e` CI job, reproduced locally with `go test -tags=e2e` against the bootstrapped cluster as described per phase in [`docs/TESTING.md`](docs/TESTING.md).
 
 ---
 

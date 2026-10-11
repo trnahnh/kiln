@@ -34,3 +34,12 @@ validation-results.md
 .film/
 .web-*.log
 .pnpm-install.log
+
+# Public trace sample fetched by hack/google-trace.sh
+scheduler-plugin/test/trace/data/
+
+# Terraform working files and the evidence a GKE window writes
+terraform/gke/.terraform/
+terraform/gke/.terraform.lock.hcl
+terraform/gke/results/
+terraform/gke/*.tfstate*

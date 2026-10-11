@@ -37,3 +37,11 @@ setup-envtest: $(ENVTEST)
 $(ENVTEST):
 	mkdir -p "$(LOCALBIN)"
 	GOBIN="$(LOCALBIN)" go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
+
+.PHONY: trace
+trace: ## Replay the Google 2011 cluster trace sample through the placement model (TESTING.md); fetch it with hack/google-trace.sh.
+	KILN_TRACE_DIR="$${KILN_TRACE_DIR:-$(shell pwd)/test/trace/data}" go test -tags=trace ./test/trace/ -run TestGoogleTraceReplay -v -count=1 -timeout 30m
+
+.PHONY: trace-real
+trace-real: setup-envtest ## The same trace through the scheduler binary on envtest (TESTING.md); KILN_TRACE_REAL_SCENARIOS=empty,warm and KILN_TRACE_WINDOW=<minutes> narrow it.
+	KILN_TRACE_DIR="$${KILN_TRACE_DIR:-$(shell pwd)/test/trace/data}" KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -tags=trace ./test/trace/ -run TestGoogleTraceRealScheduler -v -count=1 -timeout 180m
