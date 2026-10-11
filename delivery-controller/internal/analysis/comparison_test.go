@@ -154,13 +154,13 @@ func burnRateFamily() detectorFamily {
 
 // simulateFixed drives a fixed-schedule rollout through a detector on the same traffic
 // model and seed as simulate.
-func simulateFixed(cfg Config, model trafficModel, seed uint64, d detector) runResult {
+func simulateFixed(cfg Config, model trafficModel, rps rateModel, seed uint64, d detector) runResult {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	horizon := cmpStepTicks * len(cfg.Checkpoints)
 	for tick := 1; tick <= horizon; tick++ {
 		weight := cfg.Checkpoints[min((tick-1)/cmpStepTicks, len(cfg.Checkpoints)-1)]
 		pErr, pSlow := model(rng, tick)
-		n := poisson(rng, simTotalRPS*float64(weight)/100*simTick.Seconds())
+		n := poisson(rng, rps(tick)*float64(weight)/100*simTick.Seconds())
 		s := Sample{Requests: n, Errors: binomial(rng, n, pErr), Slow: binomial(rng, n, pSlow)}
 		if d.observe(s) {
 			return runResult{final: Rollback, reason: ReasonRegressionDetected, ticks: tick}
@@ -174,6 +174,15 @@ type cmpClass struct {
 	model   trafficModel
 	healthy bool
 	onset   int
+	// rps is the offered traffic; nil means the suite's constant 200 rps.
+	rps rateModel
+}
+
+func (cl cmpClass) rate() rateModel {
+	if cl.rps == nil {
+		return constantRPS
+	}
+	return cl.rps
 }
 
 func comparisonClasses() []cmpClass {
@@ -216,7 +225,7 @@ type pointResult struct {
 	meanP50       time.Duration
 }
 
-func runPoint(classes []cmpClass, family, label string, run func(model trafficModel, seed uint64) runResult) pointResult {
+func runPoint(classes []cmpClass, family, label string, run func(cl cmpClass, seed uint64) runResult) pointResult {
 	res := pointResult{family: family, label: label}
 	var p50Sum time.Duration
 	var regressions int
@@ -224,7 +233,7 @@ func runPoint(classes []cmpClass, family, label string, run func(model trafficMo
 		var o classOutcome
 		rollbacks, premature := 0, 0
 		for i := range simRuns {
-			r := run(cl.model, uint64(i+1))
+			r := run(cl, uint64(i+1))
 			if r.final != Rollback {
 				continue
 			}
@@ -275,16 +284,16 @@ func TestDetectorComparison(t *testing.T) {
 	cfg := testConfig()
 	classes := comparisonClasses()
 
-	sprt := runPoint(classes, "sequential test + CUSUM (this controller)", "ADR-0014 defaults", func(model trafficModel, seed uint64) runResult {
-		return simulate(cfg, model, seed)
+	sprt := runPoint(classes, "sequential test + CUSUM (this controller)", "ADR-0014 defaults", func(cl cmpClass, seed uint64) runResult {
+		return simulateWith(cfg, cl.model, cl.rate(), seed)
 	})
 
 	rows := []pointResult{sprt}
 	for _, fam := range []detectorFamily{thresholdFamily(), burnRateFamily()} {
 		var points []pointResult
 		for _, pt := range fam.grid(cfg) {
-			points = append(points, runPoint(classes, fam.name, pt.label, func(model trafficModel, seed uint64) runResult {
-				return simulateFixed(cfg, model, seed, pt.build())
+			points = append(points, runPoint(classes, fam.name, pt.label, func(cl cmpClass, seed uint64) runResult {
+				return simulateFixed(cfg, cl.model, cl.rate(), seed, pt.build())
 			}))
 		}
 		fastest, matched := operatingPoints(points, sprt.worstFPR)
