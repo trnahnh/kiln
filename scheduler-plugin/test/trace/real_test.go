@@ -44,6 +44,7 @@ const (
 	realCreateWorkers = 48
 	realWarmupTimeout = 2 * time.Minute
 	realVerdictWait   = 5 * time.Minute
+	realVerdictPerPod = 2 * time.Second
 	// Trace time is driven one epoch at a time (microseconds): the departures due within
 	// the epoch are applied, then its arrivals are offered together and every verdict is
 	// awaited. One second blurs the order of events inside it; the model keeps the
@@ -87,6 +88,10 @@ type realResult struct {
 	// were offered more than once.
 	rejected, retried int
 	wall              time.Duration
+	// retryVerdicts and retryWait measure the scheduler on the tasks offered again: on a
+	// full cluster every attempt walks all the nodes before it can say no.
+	retryVerdicts int
+	retryWait     time.Duration
 	// truncatedAt is the trace time the driver stopped at when the real-time budget ran
 	// out, zero when the whole window was replayed.
 	truncatedAt int64
@@ -143,8 +148,12 @@ func TestGoogleTraceRealScheduler(t *testing.T) {
 			if r.truncatedAt > 0 {
 				span = fmt.Sprintf("stopped at %s", time.Duration(r.truncatedAt)*time.Microsecond)
 			}
-			rows = append(rows, fmt.Sprintf("| %s | %s (binary) | %.2f | %+.1f%% | %.1f | %.1f | %d | %d | %d | %.1f%% | %.0f | %d | %d | %s | %s |",
-				label, profile, r.dollars, 100*(r.dollars-baseline)/baseline, r.hoursOnDemand, r.hoursSpot, r.machinesTouched, r.violations, r.unplaced, 100*r.meanUtil, r.perSecond, r.rejected, r.retried, r.wall.Round(time.Second), span))
+			retryRate := "n/a"
+			if r.retryWait > 0 {
+				retryRate = fmt.Sprintf("%.1f", float64(r.retryVerdicts)/r.retryWait.Seconds())
+			}
+			rows = append(rows, fmt.Sprintf("| %s | %s (binary) | %.2f | %+.1f%% | %.1f | %.1f | %d | %d | %d | %.1f%% | %.0f | %d | %d | %s | %s | %s |",
+				label, profile, r.dollars, 100*(r.dollars-baseline)/baseline, r.hoursOnDemand, r.hoursSpot, r.machinesTouched, r.violations, r.unplaced, 100*r.meanUtil, r.perSecond, r.rejected, r.retried, retryRate, r.wall.Round(time.Second), span))
 			t.Logf("%s / %s: %+v", label, profile, r)
 			writeRealReport(t, rows)
 		}
@@ -153,7 +162,7 @@ func TestGoogleTraceRealScheduler(t *testing.T) {
 }
 
 func realTable(rows []string) string {
-	return "| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s | Unschedulable verdicts | Tasks retried | Wall time | Span |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n"
+	return "| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s | Unschedulable verdicts | Tasks retried | Retry verdicts/s | Wall time | Span |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n"
 }
 
 // writeRealReport rewrites the report after every run, so the rows that finished survive
@@ -579,7 +588,9 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 	}
 
 	// offer creates the batch and waits for every verdict; it returns the tasks rejected.
-	offer := func(now int64, batch []placement) []placement {
+	// The whole batch shares one deadline that grows with its size, since the scheduler
+	// takes the pods one at a time.
+	offer := func(now int64, batch []placement, retry bool) []placement {
 		waits := make([]*verdict, len(batch))
 		parallel(t, ctx, len(batch), func(i int) error {
 			p := batch[i]
@@ -593,12 +604,14 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 				return err
 			})
 		})
+		started := time.Now()
+		deadline := time.After(realVerdictWait + time.Duration(len(batch))*realVerdictPerPod)
 		var rejected []placement
 		for i, w := range waits {
 			select {
 			case <-w.done:
-			case <-time.After(realVerdictWait):
-				t.Fatalf("%s: no verdict on %s within %s", ns, podNameOf(batch[i], attempts[batch[i].key]), realVerdictWait)
+			case <-deadline:
+				t.Fatalf("%s: no verdict on %s, %d of %d in the batch still open after %s", ns, podNameOf(batch[i], attempts[batch[i].key]), len(batch)-i, len(batch), time.Since(started).Round(time.Second))
 			}
 			p := batch[i]
 			name := podNameOf(p, attempts[p.key])
@@ -616,6 +629,10 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 			}
 			names[p.key] = name
 			l.record(now, m, p, windowEnd)
+		}
+		if retry {
+			res.retryVerdicts += len(batch)
+			res.retryWait += time.Since(started)
 		}
 		return rejected
 	}
@@ -637,14 +654,14 @@ func replayReal(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, ns,
 		deleteAll(l.drain(epochEnd - 1))
 		if now >= nextRetry && len(pending) > 0 {
 			retry := pending
-			pending = offer(now, retry)
+			pending = offer(now, retry, true)
 			nextRetry = now + retryEvery
 		}
 		j := i
 		for j < len(arrivals) && arrivals[j].start < epochEnd {
 			j++
 		}
-		pending = append(pending, offer(now, arrivals[i:j])...)
+		pending = append(pending, offer(now, arrivals[i:j], false)...)
 		i = j
 		if i >= nextLog {
 			t.Logf("%s: %d of %d arrivals offered, %d pending, %s elapsed", ns, i, len(arrivals), len(pending), time.Since(wall).Round(time.Second))
