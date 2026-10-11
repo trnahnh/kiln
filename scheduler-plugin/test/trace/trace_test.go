@@ -48,6 +48,9 @@ const (
 	onDemandPerCPUHour = 0.20
 	spotDiscount       = 0.3
 	spotRisk           = 0.2
+
+	// A task with no room is offered again this much trace time later (microseconds).
+	retryEvery = 60 * 1e6
 )
 
 type machine struct {
@@ -87,6 +90,7 @@ func TestGoogleTraceReplay(t *testing.T) {
 
 	machines, windowEnd := readMachines(t, filepath.Join(dir, machineEventsFile))
 	snapshot, arrivals, windowEnd := readTasks(t, filepath.Join(dir, taskEventsFile), windowEnd)
+	arrivals, windowEnd = clampWindow(t, arrivals, windowEnd)
 	t.Logf("trace: %d machines, %d tasks running at the start, %d placements in %s", len(machines), len(snapshot), len(arrivals), time.Duration(windowEnd)*time.Microsecond)
 	t.Logf("economics (synthetic): spot fraction %.2f, on-demand %.2f $/h per unit CPU, spot discount %.1f, seed %d", spotFrac, onDemandPerCPUHour, spotDiscount, seed)
 	t.Log(classMix(arrivals))
@@ -124,6 +128,23 @@ func TestGoogleTraceReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// clampWindow honours KILN_TRACE_WINDOW, a number of trace minutes to replay instead of
+// the whole sample, so a slow replay can be compared with the model over the same span.
+func clampWindow(t *testing.T, arrivals []placement, windowEnd int64) ([]placement, int64) {
+	minutes := envFloat(t, "KILN_TRACE_WINDOW", 0)
+	if minutes <= 0 {
+		return arrivals, windowEnd
+	}
+	end := min(windowEnd, int64(minutes*60*1e6))
+	kept := arrivals[:0:0]
+	for _, p := range arrivals {
+		if p.start < end {
+			kept = append(kept, p)
+		}
+	}
+	return kept, end
 }
 
 func envFloat(t *testing.T, name string, def float64) float64 {
@@ -423,70 +444,105 @@ type result struct {
 	perSecond       float64
 }
 
-// replay runs the arrivals through the strategy in time order, billing every machine for
-// the seconds it hosts at least one task. Tasks with no room are retried every minute of
-// trace time and counted unplaced if the window ends first.
+// ledger bills every machine for the seconds it hosts at least one task and keeps the
+// per-run counters; the model replay and the real-scheduler replay feed it the same way.
+type ledger struct {
+	res     result
+	deps    departures
+	touched map[int64]bool
+	utilSum float64
+	utilN   int
+}
+
+func newLedger() *ledger {
+	return &ledger{touched: map[int64]bool{}}
+}
+
+func (l *ledger) admit(now int64, m *machine, p placement) {
+	if m.running == 0 {
+		m.occupiedSince = now
+	}
+	m.running++
+	m.node.Requested.MilliCPU += p.req.MilliCPU
+	m.node.Requested.MemoryBytes += p.req.MemoryBytes
+	heap.Push(&l.deps, departure{at: p.end, m: m, p: p})
+}
+
+func (l *ledger) release(now int64, m *machine, p placement) {
+	m.running--
+	m.node.Requested.MilliCPU -= p.req.MilliCPU
+	m.node.Requested.MemoryBytes -= p.req.MemoryBytes
+	if m.running == 0 {
+		bill(&l.res, m, now-m.occupiedSince)
+	}
+}
+
+// drain releases every task due by now and returns them.
+func (l *ledger) drain(now int64) []departure {
+	var out []departure
+	for len(l.deps) > 0 && l.deps[0].at <= now {
+		d := heap.Pop(&l.deps).(departure)
+		l.release(d.at, d.m, d.p)
+		out = append(out, d)
+	}
+	return out
+}
+
+// record books a placement made at now: the class violation, the machine touched, the
+// task's end clamped to the window, and the request utilisation the machine then carries.
+func (l *ledger) record(now int64, m *machine, p placement, windowEnd int64) placement {
+	if p.class == scoring.ClassLatencySensitive && m.node.Economics.Spot {
+		l.res.violations++
+	}
+	l.touched[m.id] = true
+	p.end = max(p.end, now+(p.end-p.start))
+	if p.end > windowEnd {
+		p.end = windowEnd
+	}
+	l.admit(now, m, p)
+	l.res.placed++
+	l.utilSum += float64(m.node.Requested.MilliCPU) / float64(m.node.Allocatable.MilliCPU)
+	l.utilN++
+	return p
+}
+
+func (l *ledger) close(c *cluster, windowEnd int64) result {
+	l.drain(windowEnd)
+	for _, m := range c.machines {
+		if m.running > 0 {
+			bill(&l.res, m, windowEnd-m.occupiedSince)
+		}
+	}
+	l.res.machinesTouched = len(l.touched)
+	if l.utilN > 0 {
+		l.res.meanUtil = l.utilSum / float64(l.utilN)
+	}
+	return l.res
+}
+
+// replay runs the arrivals through the strategy in time order. Tasks with no room are
+// retried every minute of trace time and counted unplaced if the window ends first.
 func replay(c *cluster, snapshot, arrivals []placement, windowEnd int64, strat strategy) result {
-	var res result
-	var deps departures
-	touched := map[int64]bool{}
-	var utilSum float64
-	var utilN int
-
-	admit := func(now int64, m *machine, p placement) {
-		if m.running == 0 {
-			m.occupiedSince = now
-		}
-		m.running++
-		m.node.Requested.MilliCPU += p.req.MilliCPU
-		m.node.Requested.MemoryBytes += p.req.MemoryBytes
-		heap.Push(&deps, departure{at: p.end, m: m, p: p})
-	}
-	release := func(now int64, m *machine, p placement) {
-		m.running--
-		m.node.Requested.MilliCPU -= p.req.MilliCPU
-		m.node.Requested.MemoryBytes -= p.req.MemoryBytes
-		if m.running == 0 {
-			bill(&res, m, now-m.occupiedSince)
-		}
-	}
-	drain := func(now int64) {
-		for len(deps) > 0 && deps[0].at <= now {
-			d := heap.Pop(&deps).(departure)
-			release(d.at, d.m, d.p)
-		}
-	}
-
+	l := newLedger()
 	for _, p := range snapshot {
 		if m := c.byID[p.borgMachine]; m != nil {
-			admit(0, m, p)
+			l.admit(0, m, p)
 		}
 	}
 
 	var pending []placement
-	nextRetry := int64(60 * 1e6)
+	nextRetry := int64(retryEvery)
 	wall := time.Now()
 	place := func(now int64, p placement) bool {
 		m := strat.place(c, p)
 		if m == nil {
 			return false
 		}
-		if p.class == scoring.ClassLatencySensitive && m.node.Economics.Spot {
-			res.violations++
-		}
-		touched[m.id] = true
-		p.end = max(p.end, now+(p.end-p.start))
-		if p.end > windowEnd {
-			p.end = windowEnd
-		}
-		admit(now, m, p)
-		res.placed++
-		utilSum += float64(m.node.Requested.MilliCPU) / float64(m.node.Allocatable.MilliCPU)
-		utilN++
+		l.record(now, m, p, windowEnd)
 		return true
 	}
 	for _, p := range arrivals {
-		drain(p.start)
+		l.drain(p.start)
 		if p.start >= nextRetry && len(pending) > 0 {
 			kept := pending[:0]
 			for _, q := range pending {
@@ -495,25 +551,15 @@ func replay(c *cluster, snapshot, arrivals []placement, windowEnd int64, strat s
 				}
 			}
 			pending = kept
-			nextRetry = p.start + 60*1e6
+			nextRetry = p.start + retryEvery
 		}
 		if !place(p.start, p) {
 			pending = append(pending, p)
 		}
 	}
-	res.perSecond = float64(res.placed) / time.Since(wall).Seconds()
-	res.unplaced = len(pending)
-	drain(windowEnd)
-	for _, m := range c.machines {
-		if m.running > 0 {
-			bill(&res, m, windowEnd-m.occupiedSince)
-		}
-	}
-	res.machinesTouched = len(touched)
-	if utilN > 0 {
-		res.meanUtil = utilSum / float64(utilN)
-	}
-	return res
+	l.res.perSecond = float64(l.res.placed) / time.Since(wall).Seconds()
+	l.res.unplaced = len(pending)
+	return l.close(c, windowEnd)
 }
 
 func bill(res *result, m *machine, micros int64) {
