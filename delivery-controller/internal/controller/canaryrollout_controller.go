@@ -18,6 +18,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -55,6 +56,10 @@ type CanaryRolloutReconciler struct {
 	Router   mesh.Router
 	Now      func() time.Time
 	Outbox   audit.Signaler
+	// Observe, when set, is told how long each reconcile took; the scale benchmark sets it.
+	Observe func(req ctrl.Request, took time.Duration)
+	// Workers is how many rollouts reconcile at once; zero means one.
+	Workers int
 
 	// Resource versions each status patch superseded. A reconcile queued by a watch event can
 	// run before the cache has the patched object; acting on that stale copy would repeat a
@@ -70,6 +75,10 @@ func (r *CanaryRolloutReconciler) now() metav1.Time {
 }
 
 func (r *CanaryRolloutReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	if r.Observe != nil {
+		start := time.Now()
+		defer func() { r.Observe(req, time.Since(start)) }()
+	}
 	cr := &platformv1.CanaryRollout{}
 	if err := r.Get(ctx, req.NamespacedName, cr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -566,6 +575,7 @@ func (r *CanaryRolloutReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	vs := &unstructured.Unstructured{}
 	vs.SetGroupVersionKind(mesh.VirtualServiceGVK)
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(controller.Options{MaxConcurrentReconciles: max(1, r.Workers)}).
 		For(&platformv1.CanaryRollout{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
