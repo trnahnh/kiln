@@ -5,7 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +19,10 @@ import (
 // reports its operating points under the same false-rollback ceiling the sequential test is
 // held to, so time to detect is compared at equal false-rollback cost, not at defaults.
 
-const (
-	// The alternatives drive a fixed schedule: every checkpoint is held this many windows
-	// and the canary is promoted after the last, so a regression that outlives the
-	// schedule is a miss.
-	cmpStepTicks = 4
-)
+// The alternatives drive a fixed schedule: every checkpoint is held this many windows and
+// the canary is promoted after the last, so a regression that outlives the schedule is a
+// miss.
+const cmpStepTicks = 4
 
 type detector interface {
 	observe(s Sample) bool
@@ -131,7 +129,6 @@ func thresholdFamily() detectorFamily {
 		var pts []detectorPoint
 		for _, m := range []float64{1, 1.5, 2, 3, 5} {
 			for _, n := range []int{1, 2, 3, 4, 5, 6, 8} {
-				m, n := m, n
 				pts = append(pts, detectorPoint{
 					label: fmt.Sprintf("limit x%.1f, %d consecutive", m, n),
 					build: func() detector { return &thresholdDetector{cfg: cfg, multiplier: m, consecutive: n} },
@@ -146,7 +143,6 @@ func burnRateFamily() detectorFamily {
 	return detectorFamily{name: "multi-window multi-burn-rate", grid: func(cfg Config) []detectorPoint {
 		var pts []detectorPoint
 		for _, f := range []float64{0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8} {
-			f := f
 			pts = append(pts, detectorPoint{
 				label: fmt.Sprintf("burn x%.2f (%.1f/%.1f/%.1f)", f, 14.4*f, 6*f, 1*f),
 				build: func() detector { return &burnRateDetector{cfg: cfg, windows: burnRateWindows(f)} },
@@ -174,11 +170,10 @@ func simulateFixed(cfg Config, model trafficModel, seed uint64, d detector) runR
 }
 
 type cmpClass struct {
-	name     string
-	model    trafficModel
-	healthy  bool
-	onset    int
-	flagrant bool
+	name    string
+	model   trafficModel
+	healthy bool
+	onset   int
 }
 
 func comparisonClasses() []cmpClass {
@@ -188,7 +183,7 @@ func comparisonClasses() []cmpClass {
 		{name: "noisy steady at 90% of the limit", model: steady(0.009, 0.009), healthy: true},
 		{name: "noisy bursty, long-run 80% of the limit", model: bursty(0.008), healthy: true},
 		{name: "noisy one window at 10x the limit", model: spike(0.005, 0.10), healthy: true},
-		{name: "step to 30%", model: stepRegression(0.003, 0.30), onset: simOnsetTick, flagrant: true},
+		{name: "step to 30%", model: stepRegression(0.003, 0.30), onset: simOnsetTick},
 		{name: "step to 2% (the H1 rate)", model: stepRegression(0.003, 0.02), onset: simOnsetTick},
 		{name: "ramp 0.5% to 3% over 8 windows", model: rampRegression(0.005, 0.03, 8), onset: simOnsetTick},
 		{name: "latency tail 5%", model: latencyRegression(0.05), onset: simOnsetTick},
@@ -196,7 +191,10 @@ func comparisonClasses() []cmpClass {
 }
 
 type classOutcome struct {
-	rollbackRate float64
+	// rollbackRate counts, for a regression class, only rollbacks at or after the onset;
+	// one before it is a false rollback on the healthy prefix and is counted as premature.
+	rollbackRate  float64
+	prematureRate float64
 	// detection delays after onset, rollbacks only
 	delays []time.Duration
 }
@@ -205,7 +203,7 @@ func (o classOutcome) percentile(p float64) time.Duration {
 	if len(o.delays) == 0 {
 		return 0
 	}
-	sort.Slice(o.delays, func(i, j int) bool { return o.delays[i] < o.delays[j] })
+	slices.Sort(o.delays)
 	i := int(math.Ceil(p*float64(len(o.delays)))) - 1
 	return o.delays[max(0, i)]
 }
@@ -218,16 +216,20 @@ type pointResult struct {
 	meanP50       time.Duration
 }
 
-func runPoint(cfg Config, classes []cmpClass, family, label string, run func(model trafficModel, seed uint64) runResult) pointResult {
+func runPoint(classes []cmpClass, family, label string, run func(model trafficModel, seed uint64) runResult) pointResult {
 	res := pointResult{family: family, label: label}
 	var p50Sum time.Duration
 	var regressions int
 	for _, cl := range classes {
 		var o classOutcome
-		rollbacks := 0
+		rollbacks, premature := 0, 0
 		for i := range simRuns {
 			r := run(cl.model, uint64(i+1))
 			if r.final != Rollback {
+				continue
+			}
+			if !cl.healthy && r.ticks < cl.onset {
+				premature++
 				continue
 			}
 			rollbacks++
@@ -236,6 +238,7 @@ func runPoint(cfg Config, classes []cmpClass, family, label string, run func(mod
 			}
 		}
 		o.rollbackRate = float64(rollbacks) / float64(simRuns)
+		o.prematureRate = float64(premature) / float64(simRuns)
 		if cl.healthy {
 			res.worstFPR = math.Max(res.worstFPR, o.rollbackRate)
 		} else {
@@ -272,17 +275,15 @@ func TestDetectorComparison(t *testing.T) {
 	cfg := testConfig()
 	classes := comparisonClasses()
 
-	sprt := runPoint(cfg, classes, "sequential test + CUSUM (this controller)", "ADR-0014 defaults", func(model trafficModel, seed uint64) runResult {
+	sprt := runPoint(classes, "sequential test + CUSUM (this controller)", "ADR-0014 defaults", func(model trafficModel, seed uint64) runResult {
 		return simulate(cfg, model, seed)
 	})
 
-	var rows []pointResult
-	rows = append(rows, sprt)
+	rows := []pointResult{sprt}
 	for _, fam := range []detectorFamily{thresholdFamily(), burnRateFamily()} {
 		var points []pointResult
 		for _, pt := range fam.grid(cfg) {
-			pt := pt
-			points = append(points, runPoint(cfg, classes, fam.name, pt.label, func(model trafficModel, seed uint64) runResult {
+			points = append(points, runPoint(classes, fam.name, pt.label, func(model trafficModel, seed uint64) runResult {
 				return simulateFixed(cfg, model, seed, pt.build())
 			}))
 		}
@@ -345,17 +346,13 @@ func renderComparison(classes []cmpClass, rows []pointResult) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("\nPer-class false rollback for each row:\n\n| Detector | Tuning |")
+	b.WriteString("\nPer-class false rollback for each row (for a regression class, rollbacks before its onset):\n\n| Detector | Tuning |")
 	for _, cl := range classes {
-		if cl.healthy {
-			fmt.Fprintf(&b, " %s |", cl.name)
-		}
+		fmt.Fprintf(&b, " %s |", cl.name)
 	}
 	b.WriteString("\n|---|---|")
-	for _, cl := range classes {
-		if cl.healthy {
-			b.WriteString("---|")
-		}
+	for range classes {
+		b.WriteString("---|")
 	}
 	b.WriteString("\n")
 	for _, r := range rows {
@@ -363,6 +360,8 @@ func renderComparison(classes []cmpClass, rows []pointResult) string {
 		for i, cl := range classes {
 			if cl.healthy {
 				fmt.Fprintf(&b, " %.1f%% |", 100*r.outcomes[i].rollbackRate)
+			} else {
+				fmt.Fprintf(&b, " %.1f%% |", 100*r.outcomes[i].prematureRate)
 			}
 		}
 		b.WriteString("\n")
