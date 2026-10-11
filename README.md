@@ -251,7 +251,7 @@ Correctness claims are verified against independent ground truth, meaning actual
 
 Phases 0 through 7 have met their exit criteria. The final validation ran the whole platform as one synthetic week of developer requests on a fresh five-node cluster; the resulting comparison table against the baselines, and the CI run that produced it, are in [`docs/METRICS.md`](docs/METRICS.md#validation-results).
 
-Phase 8 (the durable audit outbox) is built and proven under `envtest`, but its end-to-end proof has not yet passed in CI: a harness bug kept the nightly red for 29 days before it was found, and the fix awaits its first `main` run. The account is in [`docs/postmortems/`](docs/postmortems/2026-10-10-nightly-red-for-29-days.md).
+Phase 8 (the durable audit outbox) is proven under `envtest` and, since CI run 38176386056 on 2026-10-11, end to end in `platform-e2e`: a harness bug had kept the nightly red for 29 days before it was found and fixed. The account is in [`docs/postmortems/`](docs/postmortems/2026-10-10-nightly-red-for-29-days.md).
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase tracker and what each phase had to prove.
 
