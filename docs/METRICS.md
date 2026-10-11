@@ -273,6 +273,29 @@ Sensitivity to the share of machines labelled spot (`KILN_TRACE_SPOT_FRACTION`):
 - **What holds in every scenario is the class guarantee.** Zero production-priority tasks on reclaimable capacity for the cost-aware placement, against 138 to 384 for the default model and 121 to 379 for the trace's own placement under the same labels, at every spot fraction. The latter two are not a critique of Borg or of the default scheduler, which know nothing of these labels; they show what any economics-blind placement does once reclaimable capacity exists.
 - **Throughput.** On the empty cluster the cost-aware scoring places about 10,000 to 11,500 tasks per second with the 5% candidate sample, the simpler default model 40,000 to 74,000; the pure score is 87 ns per node with no allocations (`BenchmarkScore`). When almost nothing fits, both fall to a few hundred per second because the candidate scan walks all 12,477 machines before giving up; a real scheduler would hit the same wall and queue the pod. None of this is a measurement of the scheduler binary, which the envtest benchmark in `TESTING.md` covers.
 
+### The scheduler binary on the same trace
+
+The model above is the plugin's scoring function in a loop. `TestGoogleTraceRealScheduler` (method in [`TESTING.md`](TESTING.md#scheduler-plugin)) runs the same trace through `kube-scheduler` itself on an envtest API server, the default profile and the kiln profile as `config/scheduler-config.yaml` declares it, one Node per machine, one Pod per task, the same synthetic economics and the same billing ledger; only the choice of node changes hands. Produced by `KILN_TRACE_REAL_SCENARIOS=empty make -C scheduler-plugin trace-real` on 2026-10-11, verbatim (placements per second is end to end through the API server on this laptop, driver included):
+
+| Scenario | Placement | Billed $ (node-occupancy) | vs default | On-demand node-h | Spot node-h | Machines touched | Latency-class on spot | Unplaced | Mean request util of occupied | Placements/s | Unschedulable verdicts | Tasks retried | Wall time | Span |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| empty cluster | default-scheduler (binary) | 713.29 | +0.0% | 4991.4 | 5067.0 | 12466 | 257 | 0 | 5.6% | 341 | 0 | 0 | 2m47s | whole window |
+| empty cluster | kiln-scheduler (binary) | 65.51 | -90.8% | 86.0 | 2062.6 | 2253 | 0 | 0 | 40.0% | 257 | 0 | 0 | 3m42s | whole window |
+
+Side by side with the model's rows for the empty cluster at spot fraction 0.5:
+
+| Placement | Billed $, model | Billed $, binary | vs default, model | vs default, binary | Latency-class on spot, model | binary | Machines touched, model | binary | Mean request util, model | binary |
+|---|---|---|---|---|---|---|---|---|---|---|
+| default profile | 723.06 | 713.29 | | | 249 | 257 | 12403 | 12466 | 5.9% | 5.6% |
+| kiln profile | 59.56 | 65.51 | -91.8% | -90.8% | 0 | 0 | 2104 | 2253 | 43.5% | 40.0% |
+
+**Where the binary and the model diverge.**
+
+- **The bills agree to within 1.4% for the default profile and 10% for the kiln profile**, and the saving to within one point (-90.8% against -91.8%). The kiln profile bills $5.95 more through the binary: it touches 149 more machines and packs them to 40% rather than 43.5%, because the real scheduler scores a sample of 623 feasible nodes found from a cursor that advances by nodes scanned in parallel, breaks ties among equal top scores at random, and runs the profile's remaining scoring plugins next to CostAware at weight 5, which score these affinity-free pods alike on every node but are absent from the model. The direction is the same, the packing a little looser.
+- **The class guarantee holds in the binary exactly as in the model:** 0 production-priority tasks on spot through the kiln profile against 257 through the default profile (249 in the model; the difference is the default profile's own random tie-breaking among spot and on-demand nodes it cannot tell apart).
+- **No task was rejected and none retried**: on the empty cluster the real scheduler found room for every arrival at first offer, as the model did.
+- **Throughput is the driver's, not the scheduler's.** 257 to 341 placements per second end to end is the cost of creating each pod, waiting for its binding through a watch and deleting it at departure through one API server on a laptop; the model's 10,000 per second is the scoring loop alone. The two numbers are not comparable, and neither is the scheduler binary's own ceiling, which `make bench` measures.
+
 ## Validation results
 
 The plan above ran as `TestPhase7Validation` (`e2e/phase7_test.go`, `e2e/phase7_sim_test.go`) in CI run [34085396203](https://github.com/trnahnh/kiln/actions/runs/34085396203) on commit `78e0a2a`, on a fresh five-node kind cluster after `TestPhase2` through `TestPhase6` had passed on the same cluster in the same job. The table below is the run's `validation-results` artifact, verbatim.
