@@ -70,6 +70,166 @@ Per-class false rollback for each row (for a regression class, rollbacks before 
 - **The sweep shows why.** For the threshold rule, each step of N trades false rollbacks for misses at the limit: N=3 gives 8.0% false rollbacks, N=4 2.0% with 6.6% missed, N=5 0.1% with 18.9% missed. For the burn-rate rule the scale factor does the same: 1.0x gives 16.2% false rollbacks, 1.25x 1.8% with 2.0% missed, 1.5x 0.3% with 9.0% missed, 2x misses 80%. Neither rule has an operating point that is both under the ceiling and complete, because a fixed-window rule cannot accumulate evidence across windows; the CUSUM can. (`KILN_COMPARISON_SWEEP=1` logs every point.)
 - **What this does not show.** All three rules see the same synthetic traffic: independent requests at a fixed rate with Bernoulli failures, bursty only in the one class that draws each window's rate from a Beta distribution. Real traffic has diurnal rate, correlated failures and retries; the burn-rate alert's long windows are a strength against those that this model cannot credit. The comparison is of the decision rules, not of the products that ship them.
 
+### Held-out evaluation on traffic the rules were not tuned on
+
+The comparison above tuned the alternatives on the classes it scored them on. `TestDetectorHoldout` (method in [`TESTING.md`](TESTING.md#progressive-delivery-controller)) widens the pool to 21 classes, twelve of them new, splits it into two stratified halves, tunes each alternative on one half and scores it on the other, both ways round, and scores the sequential test untuned. Produced by `KILN_HOLDOUT_REPORT=holdout.md KILN_HOLDOUT_SVG=docs/assets/detector-tradeoff.svg go test ./internal/analysis -run TestDetectorHoldout -count=1` in `delivery-controller/` on 2026-10-11, verbatim.
+
+Classes: 21, of which 9 from round 1 and 12 new. Fold A holds healthy half of the limit; noisy one window at 10x the limit; step to 30%; step to 2% (the H1 rate); ramp 0.5% to 3% over 8 windows; latency tail 5%; diurnal, rollout starts in the trough, errors track load; diurnal, rollout starts at the peak, errors track load; low traffic, 20 rps at 0.5%; very low traffic, 5 rps at 0.5%; heavy-tailed latency, mean 0.5% to 2%; fold B holds healthy clean; noisy steady at 90% of the limit; noisy bursty, long-run 80% of the limit; retry storms, rare bursts at 5x the limit with 1.5x retry volume; heavy-tailed latency, mean 0.5%; diurnal, step to 2% x load from the trough; diurnal, step to 2% x load from the peak; retry storm from onset, bursts at 8% half the time; low traffic, 20 rps, step to 3%; very low traffic, 5 rps, step to 5%.
+
+#### all classes
+
+#### Fold A: tuned on fold A, scored on fold B
+
+| Detector | Tuning chosen on the other half | Under both ceilings there? | Worst false rollback (held out) | Worst miss (held out) | Mean of median delays (held out) | diurnal, step to 2% x load from the trough: p50, missed | diurnal, step to 2% x load from the peak: p50, missed | retry storm from onset, bursts at 8% half the time: p50, missed | low traffic, 20 rps, step to 3%: p50, missed | very low traffic, 5 rps, step to 5%: p50, missed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | alpha 0.05 (ADR-0014 default) | no, nearest false-rollback rate | 7.5% (6.0 to 9.3) | 4.1% | 4m9s (4m6s to 4m18s) | 5m0s, 0.0% | 45s, 0.0% | 1m0s, 4.1% | 5m0s, 0.0% | 9m0s, 0.0% |
+| threshold, N consecutive breaches | limit x1.0, 1 consecutive | no, nearest false-rollback rate | 100.0% (99.6 to 100.0) | 59.8% | 9s (9s to 9s) | 15s, 19.6% | 0s, 59.8% | 0s, 38.2% | 15s, 27.0% | 15s, 8.4% |
+| multi-window multi-burn-rate | burn x0.50 (7.2/3.0/0.5) | no, nearest false-rollback rate | 99.8% (99.3 to 99.9) | 0.7% | 1m54s (1m54s to 1m57s) | 3m0s, 0.0% | 3m0s, 0.0% | 1m0s, 0.7% | 1m30s, 0.0% | 1m0s, 0.0% |
+
+False rollback per held-out healthy class:
+
+| Detector | healthy clean | noisy steady at 90% of the limit | noisy bursty, long-run 80% of the limit | retry storms, rare bursts at 5x the limit with 1.5x retry volume | heavy-tailed latency, mean 0.5% |
+|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller), alpha 0.05 (ADR-0014 default) | 0.0% | 0.4% | 2.8% | 7.5% | 0.0% |
+| threshold, N consecutive breaches, limit x1.0, 1 consecutive | 9.6% | 100.0% | 99.8% | 64.6% | 92.3% |
+| multi-window multi-burn-rate, burn x0.50 (7.2/3.0/0.5) | 0.0% | 99.8% | 57.0% | 12.0% | 22.8% |
+
+#### Fold B: tuned on fold B, scored on fold A
+
+| Detector | Tuning chosen on the other half | Under both ceilings there? | Worst false rollback (held out) | Worst miss (held out) | Mean of median delays (held out) | step to 30%: p50, missed | step to 2% (the H1 rate): p50, missed | ramp 0.5% to 3% over 8 windows: p50, missed | latency tail 5%: p50, missed | heavy-tailed latency, mean 0.5% to 2%: p50, missed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | alpha 0.05 (ADR-0014 default) | no, nearest false-rollback rate | 99.3% (98.6 to 99.7) | 27.9% | 1m18s (1m15s to 1m21s) | 30s, 0.0% | 1m15s, 0.0% | 1m45s, 0.0% | 30s, 0.0% | 2m30s, 27.9% |
+| threshold, N consecutive breaches | limit x1.0, 8 consecutive | no, nearest false-rollback rate | 0.0% (0.0 to 0.4) | 97.0% | 2m0s (1m57s to 2m6s) | 1m45s, 0.0% | 1m45s, 5.0% | 2m30s, 1.0% | 1m45s, 0.0% | 2m15s, 97.0% |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | no, nearest false-rollback rate | 1.5% (0.9 to 2.5) | 42.4% | 2m27s (2m27s to 2m27s) | 15s, 0.0% | 3m0s, 2.0% | 3m0s, 0.0% | 3m0s, 0.0% | 3m0s, 42.4% |
+
+False rollback per held-out healthy class:
+
+| Detector | healthy half of the limit | noisy one window at 10x the limit | diurnal, rollout starts in the trough, errors track load | diurnal, rollout starts at the peak, errors track load | low traffic, 20 rps at 0.5% | very low traffic, 5 rps at 0.5% |
+|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller), alpha 0.05 (ADR-0014 default) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 99.3% |
+| threshold, N consecutive breaches, limit x1.0, 8 consecutive | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| multi-window multi-burn-rate, burn x1.25 (18.0/7.5/1.2) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 1.5% |
+
+#### Where the sequential test loses
+
+- fold B, step to 30%: p50 30s against 15s for multi-window multi-burn-rate (burn x1.25 (18.0/7.5/1.2)), both catching 100.0% or more
+- fold B, very low traffic, 5 rps at 0.5%: 99.3% false rollback against 0.0% for threshold, N consecutive breaches (limit x1.0, 8 consecutive)
+- fold B, very low traffic, 5 rps at 0.5%: 99.3% false rollback against 1.5% for multi-window multi-burn-rate (burn x1.25 (18.0/7.5/1.2))
+- fold B, very low traffic, 5 rps at 0.5%: the sequential test itself rolls back 99.3% of healthy rollouts (Inconclusive 993)
+
+#### without the very-low-traffic pair
+
+#### Fold A: tuned on fold A, scored on fold B
+
+| Detector | Tuning chosen on the other half | Under both ceilings there? | Worst false rollback (held out) | Worst miss (held out) | Mean of median delays (held out) | diurnal, step to 2% x load from the trough: p50, missed | diurnal, step to 2% x load from the peak: p50, missed | retry storm from onset, bursts at 8% half the time: p50, missed | low traffic, 20 rps, step to 3%: p50, missed |
+|---|---|---|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | alpha 0.05 (ADR-0014 default) | no, nearest false-rollback rate | 7.5% (6.0 to 9.3) | 4.1% | 2m56.25s (2m52.5s to 3m3.75s) | 5m0s, 0.0% | 45s, 0.0% | 1m0s, 4.1% | 5m0s, 0.0% |
+| threshold, N consecutive breaches | limit x1.0, 8 consecutive | no, nearest false-rollback rate | 7.0% (5.6 to 8.8) | 86.1% | 2m3.75s (2m3.75s to 2m11.25s) | 2m30s, 79.7% | 1m45s, 0.2% | 2m0s, 86.1% | 2m0s, 19.7% |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | no, nearest false-rollback rate | 2.9% (2.0 to 4.1) | 15.9% | 3m0s (3m0s to 3m0s) | 3m0s, 15.6% | 3m0s, 0.0% | 3m0s, 15.9% | 3m0s, 0.2% |
+
+False rollback per held-out healthy class:
+
+| Detector | healthy clean | noisy steady at 90% of the limit | noisy bursty, long-run 80% of the limit | retry storms, rare bursts at 5x the limit with 1.5x retry volume | heavy-tailed latency, mean 0.5% |
+|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller), alpha 0.05 (ADR-0014 default) | 0.0% | 0.4% | 2.8% | 7.5% | 0.0% |
+| threshold, N consecutive breaches, limit x1.0, 8 consecutive | 0.0% | 7.0% | 0.0% | 0.1% | 0.0% |
+| multi-window multi-burn-rate, burn x1.25 (18.0/7.5/1.2) | 0.0% | 0.0% | 1.8% | 2.9% | 0.0% |
+
+#### Fold B: tuned on fold B, scored on fold A
+
+| Detector | Tuning chosen on the other half | Under both ceilings there? | Worst false rollback (held out) | Worst miss (held out) | Mean of median delays (held out) | step to 30%: p50, missed | step to 2% (the H1 rate): p50, missed | ramp 0.5% to 3% over 8 windows: p50, missed | latency tail 5%: p50, missed | heavy-tailed latency, mean 0.5% to 2%: p50, missed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | alpha 0.05 (ADR-0014 default) | no, nearest false-rollback rate | 0.0% (0.0 to 0.4) | 27.9% | 1m18s (1m15s to 1m21s) | 30s, 0.0% | 1m15s, 0.0% | 1m45s, 0.0% | 30s, 0.0% | 2m30s, 27.9% |
+| threshold, N consecutive breaches | limit x1.0, 8 consecutive | no, nearest false-rollback rate | 0.0% (0.0 to 0.4) | 97.0% | 2m0s (1m57s to 2m6s) | 1m45s, 0.0% | 1m45s, 5.0% | 2m30s, 1.0% | 1m45s, 0.0% | 2m15s, 97.0% |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | no, nearest false-rollback rate | 0.0% (0.0 to 0.4) | 42.4% | 2m27s (2m27s to 2m27s) | 15s, 0.0% | 3m0s, 2.0% | 3m0s, 0.0% | 3m0s, 0.0% | 3m0s, 42.4% |
+
+False rollback per held-out healthy class:
+
+| Detector | healthy half of the limit | noisy one window at 10x the limit | diurnal, rollout starts in the trough, errors track load | diurnal, rollout starts at the peak, errors track load | low traffic, 20 rps at 0.5% |
+|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller), alpha 0.05 (ADR-0014 default) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| threshold, N consecutive breaches, limit x1.0, 8 consecutive | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| multi-window multi-burn-rate, burn x1.25 (18.0/7.5/1.2) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+
+#### Where the sequential test loses
+
+- fold A, noisy bursty, long-run 80% of the limit: 2.8% false rollback against 0.0% for threshold, N consecutive breaches (limit x1.0, 8 consecutive)
+- fold A, noisy bursty, long-run 80% of the limit: 2.8% false rollback against 1.8% for multi-window multi-burn-rate (burn x1.25 (18.0/7.5/1.2))
+- fold A, retry storms, rare bursts at 5x the limit with 1.5x retry volume: 7.5% false rollback against 0.1% for threshold, N consecutive breaches (limit x1.0, 8 consecutive)
+- fold A, retry storms, rare bursts at 5x the limit with 1.5x retry volume: 7.5% false rollback against 2.9% for multi-window multi-burn-rate (burn x1.25 (18.0/7.5/1.2))
+- fold B, step to 30%: p50 30s against 15s for multi-window multi-burn-rate (burn x1.25 (18.0/7.5/1.2)), both catching 100.0% or more
+
+#### Trade-off on the ten new classes
+
+![Detection delay against false rollback for every tuning point of the three detectors on the ten new traffic classes, with 95% intervals](assets/detector-tradeoff.svg)
+
+Every tuning point of every family on the ten round-2 classes without the 5 rps pair; worst false rollback with its 95% Wilson interval, mean of the regression classes' median delays with a 95% bootstrap interval; the rows the plot draws:
+
+| Detector | Tuning | Worst false rollback | 95% interval | Worst miss | Mean of median delays | 95% interval |
+|---|---|---|---|---|---|---|
+| sequential test + CUSUM (this controller) | alpha 0.01 | 7.3% | 5.8 to 9.1 | 33.2% | 3m30s | 3m24s to 3m33s |
+| sequential test + CUSUM (this controller) | alpha 0.02 | 7.5% | 6.0 to 9.3 | 30.5% | 3m15s | 3m12s to 3m21s |
+| sequential test + CUSUM (this controller) | alpha 0.05 (ADR-0014 default) | 7.5% | 6.0 to 9.3 | 27.9% | 2m51s | 2m48s to 3m0s |
+| sequential test + CUSUM (this controller) | alpha 0.10 | 9.9% | 8.2 to 11.9 | 18.2% | 2m45s | 2m42s to 2m51s |
+| sequential test + CUSUM (this controller) | alpha 0.20 | 5.9% | 4.6 to 7.5 | 22.9% | 3m3s | 2m54s to 3m6s |
+| threshold, N consecutive breaches | limit x1.0, 1 consecutive | 97.4% | 96.2 to 98.2 | 59.8% | 6s | 6s to 6s |
+| threshold, N consecutive breaches | limit x1.0, 2 consecutive | 46.2% | 43.1 to 49.3 | 12.3% | 30s | 27s to 33s |
+| threshold, N consecutive breaches | limit x1.0, 3 consecutive | 11.9% | 10.0 to 14.1 | 22.0% | 57s | 54s to 57s |
+| threshold, N consecutive breaches | limit x1.0, 4 consecutive | 4.0% | 3.0 to 5.4 | 50.6% | 1m21s | 1m18s to 1m24s |
+| threshold, N consecutive breaches | limit x1.0, 5 consecutive | 2.2% | 1.5 to 3.3 | 71.4% | 1m36s | 1m33s to 1m42s |
+| threshold, N consecutive breaches | limit x1.0, 6 consecutive | 1.2% | 0.7 to 2.1 | 86.5% | 1m51s | 1m45s to 1m54s |
+| threshold, N consecutive breaches | limit x1.0, 8 consecutive | 0.1% | 0.0 to 0.6 | 97.0% | 2m6s | 2m3s to 2m15s |
+| threshold, N consecutive breaches | limit x1.5, 1 consecutive | 86.7% | 84.5 to 88.7 | 27.0% | 15s | 9s to 15s |
+| threshold, N consecutive breaches | limit x1.5, 2 consecutive | 24.3% | 21.7 to 27.1 | 18.6% | 45s | 45s to 48s |
+| threshold, N consecutive breaches | limit x1.5, 3 consecutive | 8.8% | 7.2 to 10.7 | 54.3% | 1m12s | 1m9s to 1m15s |
+| threshold, N consecutive breaches | limit x1.5, 4 consecutive | 3.9% | 2.9 to 5.3 | 80.9% | 1m33s | 1m27s to 1m36s |
+| threshold, N consecutive breaches | limit x1.5, 5 consecutive | 2.1% | 1.4 to 3.2 | 92.6% | 1m51s | 1m39s to 1m51s |
+| threshold, N consecutive breaches | limit x1.5, 6 consecutive | 1.2% | 0.7 to 2.1 | 97.3% | 1m51s | 1m45s to 2m0s |
+| threshold, N consecutive breaches | limit x1.5, 8 consecutive | 0.1% | 0.0 to 0.6 | 99.6% | 2m6s | 2m3s to 2m21s |
+| threshold, N consecutive breaches | limit x2.0, 1 consecutive | 55.2% | 52.1 to 58.3 | 27.0% | 15s | 12s to 15s |
+| threshold, N consecutive breaches | limit x2.0, 2 consecutive | 19.4% | 17.1 to 22.0 | 63.7% | 45s | 42s to 48s |
+| threshold, N consecutive breaches | limit x2.0, 3 consecutive | 8.5% | 6.9 to 10.4 | 92.7% | 1m6s | 1m3s to 1m9s |
+| threshold, N consecutive breaches | limit x2.0, 4 consecutive | 3.9% | 2.9 to 5.3 | 98.6% | 1m27s | 1m21s to 1m33s |
+| threshold, N consecutive breaches | limit x2.0, 5 consecutive | 2.1% | 1.4 to 3.2 | 99.9% | 1m48s | 1m45s to 1m54s |
+| threshold, N consecutive breaches | limit x2.0, 6 consecutive | 1.2% | 0.7 to 2.1 | 99.9% | 2m3s | 1m45s to 2m9s |
+| threshold, N consecutive breaches | limit x2.0, 8 consecutive | 0.1% | 0.0 to 0.6 | 100.0% | 2m10s | 2m5s to 2m15s |
+| threshold, N consecutive breaches | limit x3.0, 1 consecutive | 44.1% | 41.1 to 47.2 | 58.5% | 18s | 15s to 21s |
+| threshold, N consecutive breaches | limit x3.0, 2 consecutive | 18.8% | 16.5 to 21.3 | 95.1% | 45s | 42s to 51s |
+| threshold, N consecutive breaches | limit x3.0, 3 consecutive | 8.0% | 6.5 to 9.8 | 99.4% | 1m3s | 57s to 1m15s |
+| threshold, N consecutive breaches | limit x3.0, 4 consecutive | 3.5% | 2.5 to 4.8 | 100.0% | 1m26.25s | 1m18.75s to 1m41.25s |
+| threshold, N consecutive breaches | limit x3.0, 5 consecutive | 2.0% | 1.3 to 3.1 | 100.0% | 1m45s | 1m37.5s to 1m52.5s |
+| threshold, N consecutive breaches | limit x3.0, 6 consecutive | 1.0% | 0.5 to 1.8 | 100.0% | 2m0s | 1m40s to 2m5s |
+| threshold, N consecutive breaches | limit x3.0, 8 consecutive | 0.1% | 0.0 to 0.6 | 100.0% | 2m0s | 1m55s to 2m10s |
+| threshold, N consecutive breaches | limit x5.0, 1 consecutive | 29.7% | 26.9 to 32.6 | 91.3% | 21s | 18s to 21s |
+| threshold, N consecutive breaches | limit x5.0, 2 consecutive | 6.5% | 5.1 to 8.2 | 100.0% | 45s | 33.75s to 52.5s |
+| threshold, N consecutive breaches | limit x5.0, 3 consecutive | 0.9% | 0.5 to 1.7 | 100.0% | 1m10s | 45s to 1m40s |
+| threshold, N consecutive breaches | limit x5.0, 4 consecutive | 0.2% | 0.1 to 0.7 | 100.0% | 1m30s | 1m30s to 1m35s |
+| threshold, N consecutive breaches | limit x5.0, 5 consecutive | 0.0% | 0.0 to 0.4 | 100.0% | 1m45s | 1m30s to 2m0s |
+| threshold, N consecutive breaches | limit x5.0, 6 consecutive | 0.0% | 0.0 to 0.4 | 100.0% | 1m45s | 1m30s to 1m45s |
+| threshold, N consecutive breaches | limit x5.0, 8 consecutive | 0.0% | 0.0 to 0.4 | 100.0% | 2m0s | 2m0s to 2m15s |
+| multi-window multi-burn-rate | burn x0.50 (7.2/3.0/0.5) | 42.6% | 39.6 to 45.7 | 7.1% | 2m18s | 2m18s to 2m21s |
+| multi-window multi-burn-rate | burn x0.75 (10.8/4.5/0.8) | 6.7% | 5.3 to 8.4 | 20.2% | 2m39s | 2m39s to 2m39s |
+| multi-window multi-burn-rate | burn x1.00 (14.4/6.0/1.0) | 5.0% | 3.8 to 6.5 | 31.0% | 2m45s | 2m45s to 2m48s |
+| multi-window multi-burn-rate | burn x1.25 (18.0/7.5/1.2) | 2.9% | 2.0 to 4.1 | 42.4% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x1.50 (21.6/9.0/1.5) | 1.9% | 1.2 to 2.9 | 58.1% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x2.00 (28.8/12.0/2.0) | 0.7% | 0.3 to 1.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x2.50 (36.0/15.0/2.5) | 0.2% | 0.1 to 0.7 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x3.00 (43.2/18.0/3.0) | 0.0% | 0.0 to 0.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x4.00 (57.6/24.0/4.0) | 0.0% | 0.0 to 0.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x5.00 (72.0/30.0/5.0) | 0.0% | 0.0 to 0.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x6.00 (86.4/36.0/6.0) | 0.0% | 0.0 to 0.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+| multi-window multi-burn-rate | burn x8.00 (115.2/48.0/8.0) | 0.0% | 0.0 to 0.4 | 100.0% | 3m0s | 3m0s to 3m0s |
+
+**Reading the hold-out tables.**
+
+- **At 5 rps the sequential test, as these rollouts are configured, rolls back 99.3% of healthy canaries, all as `Inconclusive`.** At 5 rps and a 5% first step the 500-request sample gate needs about 33 minutes, past the 30-minute `maxStepDuration`; the rule does what the spec says, and the spec is wrong for that traffic. `minSampleSize` and `maxStepDuration` are per-rollout fields and must be set from the service's rate; the controller does not derive them. The fixed-window rules decide there only because they have no sample gate: at 15 s windows a 5 rps canary serves about four requests per window at 5% weight, and a single error is a 25% rate. This pair is reported separately above because one such class fixes the worst-case column of every detector.
+- **Correlated bursts push the sequential test over its alpha.** On rare retry storms (bursts at five times the limit, 1.5x request volume inside a burst, long-run rate 0.6%) it rolls back 7.5% of healthy rollouts against the 5% it promises; the per-window evidence cap of a third of the bound means three bursts in a row decide. The burn-rate alert tuned on the other fold sits at 2.9% there, the threshold at 0.1%. This is the clearest loss, and it is the independence assumption of the likelihood ratio, not the rate it is held to.
+- **Heavy-tailed latency defeats everyone, the sequential test least.** With each window's slow fraction drawn log-normally around a mean that steps from 0.5% to 2%, the sequential test misses 27.9% of regressions against the 10% it promises; the burn-rate alert misses 42.4% and the threshold 97%. Nothing here reaches its design power on that traffic.
+- **Diurnal load costs no false rollbacks and slows detection from the trough.** No detector rolls back a healthy diurnal canary. A 2x-times-load regression that starts in the trough, where the canary serves about 15 requests per window, takes the sequential test 5 minutes at the median; from the peak, 45 s. The burn-rate alert at its chosen tuning reaches 3 minutes from the trough but misses 15.6% of those rollouts.
+- **The flagrant step stays the burn-rate alert's win,** 15 s against 30 s, one window against the three the evidence cap needs, as in round 1.
+- **The alpha sweep is not monotone.** Over the ten new classes the sequential test's worst false rollback is 7.3% at alpha 0.01, 7.5% at 0.05, 9.9% at 0.10 and 5.9% at 0.20: a larger alpha lowers the rollback bound but also ends healthy rollouts sooner, so the retry-storm class has fewer windows in which to fire. The worst case is set by the burst structure, not by alpha.
+- **What the held-out split changes.** Tuned out of sample, the threshold rule's chosen point misses 86 to 97% of the heavy-tailed and retry-storm regressions and the burn-rate alert's misses 16 to 42%; in round 1, tuned in sample, their misses were 6.6% and 2.0%. The sequential test's figures do not move, because nothing about it was tuned.
+
 ## Public-trace replay
 
 The placement model on a public workload: the first 93.5 minutes of the Google 2011 cluster trace, 12,477 machines, 132,982 tasks already running when the trace starts and 57,012 new placements (521 production-priority, mapped to latency-sensitive; 42,626 standard; 13,865 free-tier, mapped to batch), replayed through the plugin's scoring function, through a least-allocated-plus-balanced model of the default profile, and through the machine the trace itself recorded for each task (method and every assumption in [`TESTING.md`](TESTING.md#scheduler-plugin)). Prices are synthetic: a seeded half of the machines is spot at the kind cluster's ratio; the trace has none. Produced by `make -C scheduler-plugin trace` on 2026-10-10, verbatim (placements per second is this laptop's wall clock, a 16-thread Ryzen 7 7735HS):
