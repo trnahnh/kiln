@@ -349,9 +349,9 @@ func TestDetectorHoldout(t *testing.T) {
 	}
 
 	newOnly := indexesOf(classes, "round 2")
-	report.WriteString("\n# Trade-off on the new classes only\n\nEvery tuning point of every family, scored on the twelve round-2 classes no rule was tuned on in round 1. Worst false rollback is the highest healthy-class rate with its 95% Wilson interval; detection is the mean of the regression classes' median delays with a 95% bootstrap interval.\n\n")
-	report.WriteString(renderCurveTable(classes, all, newOnly, rng))
 	plotted := filterIdx(classes, newOnly, func(cl holdoutClass) bool { return !strings.HasPrefix(cl.name, veryLowTraffic) })
+	report.WriteString("\n# Trade-off on the new classes only\n\nEvery tuning point of every family, scored on the ten round-2 classes no rule was tuned on in round 1, without the 5 rps pair (on which the sequential test rolls back 99.3% of healthy rollouts at every alpha; see the folds). Worst false rollback is the highest healthy-class rate with its 95% Wilson interval; detection is the mean of the regression classes' median delays with a 95% bootstrap interval.\n\n")
+	report.WriteString(renderCurveTable(classes, all, plotted, rng))
 
 	t.Log("\n" + report.String())
 	if err := os.WriteFile(reportPath, []byte(report.String()), 0o644); err != nil {
