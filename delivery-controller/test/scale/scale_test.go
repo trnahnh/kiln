@@ -388,6 +388,9 @@ func TestCanaryRolloutScale(t *testing.T) {
 	// Three ClusterIP Services per rollout; envtest's default /24 holds 254 addresses.
 	env.ControlPlane.APIServer = &envtest.APIServer{}
 	env.ControlPlane.APIServer.Configure().Append("service-cluster-ip-range", "10.0.0.0/12")
+	// The controller records an Event per transition; with an hour of retention the API
+	// server's periodic object count over them stalls etcd on Windows (see the trace replay).
+	env.ControlPlane.APIServer.Configure().Append("event-ttl", "1m")
 	cfg, err := env.Start()
 	if err != nil {
 		t.Fatalf("start envtest: %v", err)
@@ -423,14 +426,31 @@ func TestCanaryRolloutScale(t *testing.T) {
 		r.workers, r.qps, r.burst = workers, float64(qps), float64(burst)
 		rows = append(rows, r)
 		t.Logf("%d rollouts: %+v", n, r)
-	}
-	table := renderTable(rows)
-	t.Log("\n" + table)
-	if path := os.Getenv("KILN_SCALE_REPORT"); path != "" {
-		if err := os.WriteFile(path, []byte(table), 0o644); err != nil {
-			t.Fatal(err)
+		// Rewritten after every size, so the sizes that finished survive a later failure.
+		if path := os.Getenv("KILN_SCALE_REPORT"); path != "" {
+			if err := os.WriteFile(path, []byte(renderTable(rows)), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
+	t.Log("\n" + renderTable(rows))
+}
+
+// retrying repeats a call on the errors a busy control plane returns for a moment, so an
+// etcd stall under a large wave does not end the run.
+func retrying(ctx context.Context, do func() error) error {
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		if err = do(); err == nil || ctx.Err() != nil {
+			return err
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "timed out") && !strings.Contains(msg, "Unavailable") && !strings.Contains(msg, "timeout") && !strings.Contains(msg, "too many requests") {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return err
 }
 
 func startManager(t *testing.T, ctx context.Context, cfg *rest.Config, source slo.Source, rlog *reconcileLog, workers int) ctrl.Manager {
@@ -491,10 +511,13 @@ func runWave(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, hc cli
 		ns, name := namespaceOf(n, i, perNamespace), fmt.Sprintf("app-%05d", i)
 		labels := map[string]string{"app": name}
 		svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}}}
-		if _, err := cs.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		if err := retrying(ctx, func() error { _, err := cs.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); return err }); err != nil {
 			return err
 		}
-		if _, err := cs.AppsV1().Deployments(ns).Create(ctx, deployment(ns, name, "v1"), metav1.CreateOptions{}); err != nil {
+		if err := retrying(ctx, func() error {
+			_, err := cs.AppsV1().Deployments(ns).Create(ctx, deployment(ns, name, "v1"), metav1.CreateOptions{})
+			return err
+		}); err != nil {
 			return err
 		}
 		cr := &platformv1.CanaryRollout{
@@ -509,7 +532,7 @@ func runWave(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, hc cli
 				},
 			},
 		}
-		return hc.Create(ctx, cr)
+		return retrying(ctx, func() error { return hc.Create(ctx, cr) })
 	})
 	created := time.Since(wall)
 
@@ -544,7 +567,7 @@ func runWave(t *testing.T, ctx context.Context, cs *kubernetes.Clientset, hc cli
 		ns, name := namespaceOf(n, i, perNamespace), fmt.Sprintf("app-%05d", i)
 		d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		patch := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"server","image":"fortio/fortio:v2"}]}}}}`)
-		if err := hc.Patch(ctx, d, client.RawPatch(types.StrategicMergePatchType, patch)); err != nil {
+		if err := retrying(ctx, func() error { return hc.Patch(ctx, d, client.RawPatch(types.StrategicMergePatchType, patch)) }); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(pause)
@@ -605,7 +628,7 @@ func cleanup(t *testing.T, ctx context.Context, hc client.Client, n, perNamespac
 		vs := &unstructured.Unstructured{}
 		vs.SetGroupVersionKind(mesh.VirtualServiceGVK)
 		for _, obj := range []client.Object{&platformv1.CanaryRollout{}, vs, &appsv1.Deployment{}, &corev1.Service{}} {
-			if err := hc.DeleteAllOf(ctx, obj, client.InNamespace(ns)); err != nil {
+			if err := retrying(ctx, func() error { return hc.DeleteAllOf(ctx, obj, client.InNamespace(ns)) }); err != nil {
 				t.Fatal(err)
 			}
 		}
