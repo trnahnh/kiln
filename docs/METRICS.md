@@ -296,6 +296,38 @@ Side by side with the model's rows for the empty cluster at spot fraction 0.5:
 - **No task was rejected and none retried**: on the empty cluster the real scheduler found room for every arrival at first offer, as the model did.
 - **Throughput is the driver's, not the scheduler's.** 257 to 341 placements per second end to end is the cost of creating each pod, waiting for its binding through a watch and deleting it at departure through one API server on a laptop; the model's 10,000 per second is the scoring loop alone. The two numbers are not comparable, and neither is the scheduler binary's own ceiling, which `make bench` measures.
 
+**The full cluster did not finish.** On the cluster carrying the 132,982 running tasks, with the trace cut to its first 40 minutes (29,906 arrivals, which the model places in 36 s leaving 14,137 unplaced for every strategy; `KILN_TRACE_WINDOW=40 make -C scheduler-plugin trace`), the binary offered 3,785 arrivals in 2m15s, accumulated 1,364 rejected tasks, and was still inside the first retry batch of those 1,364 forty minutes later when this was written, its scheduler at full CPU. On a full 12,477-node cluster every rejected pod costs the real scheduler a filter pass over every node before it can say no, and a retry batch of a thousand such pods is minutes of work; the model's "a few hundred placements per second when nothing fits" is the cost of its own loop, not the binary's. This is the divergence the full-cluster scenario shows, and the model's figures for it (identical bills, zero saving) stand only as the model's.
+
+## Controller scalability
+
+`TestCanaryRolloutScale` (method in [`TESTING.md`](TESTING.md#progressive-delivery-controller)) drives N concurrent rollouts through the reconciler on an envtest API server and measures the wave in which every target is updated. Two runs on 2026-10-11, same harness, same laptop (16-thread Ryzen 7 7735HS), another envtest test running alongside both times.
+
+**Before: the controller as `main.go` wired it, controller-runtime's 20 qps / 30 burst client budget and one worker.** Assembled from the run's log lines, verbatim; the run's own report file was lost when its 2,000-rollout create hit an etcd timeout, since fixed by writing the report after every size:
+
+| Rollouts | Workers | Client qps/burst | Init wave | Rollout wave | Finished | Reconciles | Reconcile p50 / p99 | Tick lateness p50 / p99 / max (of 15 s) | Ticks | Queue depth max / mean | Controller writes/s | Harness writes/s | Reads/s | Live heap MB | kube-apiserver RSS MB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 500 | 1 | 20/30 | 1m58s | 9m21s | 500 | 6998 | 98ms / 155ms | 35s / 35s / 36s | 3500 | 500 / 491.6 | 33.8 | 3.6 | 12.9 | 57 | 457 |
+| 1000 | 1 | 20/30 | 4m8s | 12m39s, timed out | 0 | 7915 | 100ms / 135ms | 85s / 85s / 86s | 5661 | 1000 / 998.6 | 33.3 | 2.6 | 13.6 | 92 | 581 |
+
+API server requests per second during the wave, by verb and resource, 500 rollouts: PATCH canaryrollouts/status 14.2; GET virtualservices 8.9; POST events 8.9; PUT virtualservices 7.1; GET deployments 3.6; PATCH deployments 3.6; PUT deployments/status 3.6. 1000 rollouts: PATCH canaryrollouts/status 11.8; GET virtualservices 10.4; POST events 10.1; PATCH deployments 2.6; PUT deployments/status 2.6.
+
+**After: `--kube-api-qps=100 --kube-api-burst=200 --concurrent-reconciles=8`, the new defaults.** Produced by `KILN_SCALE_ROLLOUTS=500,1000,2000,5000 KILN_SCALE_QPS=100 KILN_SCALE_BURST=200 KILN_SCALE_WORKERS=8 go test -tags=scale ./test/scale/ -run TestCanaryRolloutScale -count=1` in `delivery-controller/`, the rows that had finished when this was written, verbatim; the 2,000 and 5,000 sizes were still running:
+
+| Rollouts | Workers | Client qps/burst | Init wave | Rollout wave | Finished | Reconciles | Reconcile p50 / p99 | Tick lateness p50 / p99 / max (of 15 s) | Ticks | Queue depth max / mean | Controller writes/s | Harness writes/s | Reads/s | Live heap MB | kube-apiserver RSS MB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 500 | 8 | 100/200 | 22s | 2m39s | 500 | 12462 | 14ms / 122ms | 0s / 1s / 2s | 3500 | 185 / 33.0 | 151.7 | 12.7 | 47.4 | 56 | 2951 |
+| 1000 | 8 | 100/200 | 38s | 3m58s | 1000 | 22473 | 81ms / 160ms | 5s / 10s / 10s | 7000 | 982 / 618.8 | 193.2 | 16.8 | 61.2 | 97 | 3343 |
+
+API server requests per second during the wave, 500 rollouts: PATCH canaryrollouts/status 82.4; GET virtualservices 34.1; POST events 31.4; PUT virtualservices 25.1; GET deployments 12.9; PUT deployments/status 12.7; PATCH deployments 12.6. 1000 rollouts: PATCH canaryrollouts/status 100.9; GET virtualservices 43.9; POST events 42.0; PUT virtualservices 33.6; GET deployments 16.8; PUT deployments/status 16.8; PATCH deployments 16.8.
+
+**Reading the tables.**
+
+- **The bottleneck was the client budget, not the reconciler.** At 500 rollouts the controller's own writes sat at 34 per second however many were due, the workqueue held 492 of 500 rollouts on average, every 15 s analysis tick fired 35 s late, and a reconcile took 98 ms at the median of which almost all was waiting for a client-side token: the same reconcile takes 14 ms once the budget is raised. At 1,000 rollouts the queue never drained (999 of 1,000 queued, ticks 85 s late) and not one rollout promoted inside twelve minutes. A manager created with a `rest.Config` that sets no QPS gets controller-runtime's 20 qps and 30 burst, which `main.go` did.
+- **The fix moves the wall, it does not remove it.** With 100 qps and eight workers, 500 rollouts promote in 2m39s with ticks on time (p99 one second late), against 9m21s and 35 s before. At 1,000 the status patches alone reach 101 per second, the new budget, and the queue fills again (mean 619, ticks 5 s late at the median, 10 s at p99); every rollout still promotes, in 3m58s. The next limit is the same knob, and behind it the API server.
+- **Where the requests go.** Per reconcile the controller sends one status patch, and on most reconciles one live `GET` of the VirtualService, because unstructured objects are read from the API server rather than the informer cache unless the manager's client is told otherwise; at 1,000 rollouts that is 44 reads per second the cache already holds. Events cost 31 to 42 writes per second, a quarter of the budget. Those two are the candidates for the next fix; the client budget was the first because it blocked everything else.
+- **Memory is not the limit at these sizes.** The process holding the controller, its caches and the harness used 56 to 97 MB of live heap. The API server column in the "before" rows is this test's API server; in the "after" rows the probe read another test's API server that was running alongside with 133,000 pods, so those two values are not this benchmark's and are left in only because the table is verbatim.
+- **What this is not.** One laptop, an envtest API server, a stand-in for the Deployment controller and no Istio: the request rates are what the controller asks of an API server, not what a managed control plane would sustain, and the tick lateness is measured at second resolution because `lastTickAt` is stored to the second.
+
 ## Validation results
 
 The plan above ran as `TestPhase7Validation` (`e2e/phase7_test.go`, `e2e/phase7_sim_test.go`) in CI run [34085396203](https://github.com/trnahnh/kiln/actions/runs/34085396203) on commit `78e0a2a`, on a fresh five-node kind cluster after `TestPhase2` through `TestPhase6` had passed on the same cluster in the same job. The table below is the run's `validation-results` artifact, verbatim.

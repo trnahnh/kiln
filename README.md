@@ -271,6 +271,9 @@ cd delivery-controller && KILN_COMPARISON_REPORT=/tmp/comparison.md go test ./in
 # The placement model on the public Google 2011 cluster trace, 12,477 machines
 # (docs/METRICS.md, "Public-trace replay"); the fetch is 4.5 MB and checksum-verified
 bash hack/google-trace.sh && make -C scheduler-plugin trace
+KILN_TRACE_REAL_SCENARIOS=empty make -C scheduler-plugin trace-real                          # the scheduler binary on the same trace, about 7 minutes
+cd delivery-controller && KILN_HOLDOUT_REPORT=holdout.md go test ./internal/analysis -run TestDetectorHoldout -count=1   # held-out detector evaluation, a few minutes
+cd delivery-controller && KILN_SCALE_ROLLOUTS=500,1000 KILN_SCALE_REPORT=scale.md go test -tags=scale ./test/scale/ -run TestCanaryRolloutScale -count=1 -timeout 120m   # controller scale, as shipped
 ```
 
 The cluster-backed figures (provisioning, rollback and abort timings, the kind scheduler replay, the simulated week) come from the `platform-e2e` CI job, reproduced locally with `go test -tags=e2e` against the bootstrapped cluster as described per phase in [`docs/TESTING.md`](docs/TESTING.md).
