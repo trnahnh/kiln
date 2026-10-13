@@ -927,6 +927,12 @@ table.validation td.num {
     border: 0;
     max-width: none;
   }
+  table.validation.labels-wide td {
+    grid-template-columns: 7.5rem 1fr;
+  }
+  table.validation td > span {
+    grid-column: 2;
+  }
   table.validation td::before {
     content: attr(data-label);
     font-family: var(--font-mono);
@@ -938,6 +944,12 @@ table.validation td.num {
   }
   table.validation td:empty {
     display: none;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  table.labels-wide td.num {
+    white-space: normal;
   }
 }
 

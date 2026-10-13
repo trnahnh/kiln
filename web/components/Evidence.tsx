@@ -45,7 +45,8 @@ function Trace() {
         </>
       }
     >
-      <table className="validation mt-6">
+      <div className="mt-6 overflow-x-auto">
+      <table className="validation labels-wide">
         <thead>
           <tr>
             <th>Placement</th>
@@ -77,6 +78,7 @@ function Trace() {
           ))}
         </tbody>
       </table>
+      </div>
       <p className="mt-6 max-w-[88ch] text-[14px] leading-relaxed text-fg-muted">
         The binary agrees with the model on the bill to within a few percent and on the class guarantee exactly. On the
         cluster as the trace found it, already {defaultFull.util} requested and carrying {n(t.runningTasks)} tasks, the
@@ -108,7 +110,8 @@ function Detectors() {
         </>
       }
     >
-      <table className="validation mt-6">
+      <div className="mt-6 overflow-x-auto">
+      <table className="validation labels-wide">
         <thead>
           <tr>
             <th>Detector</th>
@@ -145,6 +148,7 @@ function Detectors() {
           ))}
         </tbody>
       </table>
+      </div>
       <p className="mt-6 max-w-[88ch] text-[14px] leading-relaxed text-fg-muted">
         Then {h.classes} traffic classes, {h.newClasses} of them new, split in two: each alternative tuned on one half
         and scored on the other, the sequential test untuned. Where it loses:
@@ -200,7 +204,8 @@ function Scale() {
         </>
       }
     >
-      <table className="validation mt-6">
+      <div className="mt-6 overflow-x-auto">
+      <table className="validation labels-wide">
         <thead>
           <tr>
             <th>Rollouts</th>
@@ -243,6 +248,7 @@ function Scale() {
           ))}
         </tbody>
       </table>
+      </div>
       <p className="mt-6 max-w-[88ch] text-[14px] leading-relaxed text-fg-muted">
         Lateness in a canary controller is risk: a regression that should roll back in 30 s rolls back while the queue
         drains. The fix moves the wall rather than removing it; at a thousand rollouts the status patches alone reach
