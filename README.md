@@ -40,7 +40,7 @@ Why each piece was built rather than adopted, Argo Rollouts, Chaos Mesh, Backsta
 
 The platform does not know, and does not need to know, whether a person or an AI agent submitted the request. An agent gets the same JSON contract, the same bearer token, the same policy gate before anything is provisioned and the same hash-chained audit row as a developer at a keyboard. That is what makes agent-submitted infrastructure safe to allow: the guardrails are in the structure of the platform, not in the judgement of the requester.
 
-Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md). The landing page, a drawing of the request flow dimensioned with the validation numbers, is at [kiln-idp.vercel.app](https://kiln-idp.vercel.app) and lives in [`web/`](web/README.md).
+Full problem writeup and the baseline this platform is measured against: [`docs/METRICS.md`](docs/METRICS.md). The landing page, a drawing of the request flow dimensioned with the validation numbers, is at [kiln-idp.vercel.app](https://kiln-idp.vercel.app) and lives in [`web/`](web/README.md). Its last sheet, [sheet 7](https://kiln-idp.vercel.app/#sheet-7), is the second pass over the headline claims: the scheduler model against the scheduler binary on the Google cluster trace, the canary decision against a threshold and a burn-rate rule with where it loses on held-out traffic, the controller at a thousand concurrent rollouts before and after its fix, and the Phase 8 proof with its postmortem.
 
 ---
 
