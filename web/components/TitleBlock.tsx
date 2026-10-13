@@ -6,7 +6,7 @@ interface Props {
   drawnBy: string;
 }
 
-export const SHEET_COUNT = 6;
+export const SHEET_COUNT = 7;
 
 export default function TitleBlock({ n, title, drawnBy }: Props) {
   return (

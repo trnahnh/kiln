@@ -121,7 +121,7 @@ function annotations(model: DraftModel, cam: Camera): Annotations {
 // source of the social card, and with `annotate` the README sheet. Same model, same
 // projection, same fit rule.
 export function renderSvg(model: DraftModel, palette: SvgPalette, opts: SvgOptions = {}): string {
-  const { width = 1600, height = 1000, sheet = "1 OF 6", annotate = false } = opts;
+  const { width = 1600, height = 1000, sheet = "1 OF 7", annotate = false } = opts;
   const drawing = layoutDrawing(model, "landscape", ISO);
   const extra = annotate ? annotations(model, ISO) : null;
   const inset = 28;

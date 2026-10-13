@@ -599,9 +599,9 @@ export default function DraftScene({ slotId }: Props) {
             <text data-tbright data-tbwide x="162" y="17" className="tb-svg-k">TITLE</text>
             <text data-tbright data-tbwide x="162" y="36" className="tb-svg-v">{model ? `${model.title}, ${model.subtitle}` : ""}</text>
             <text data-tbright data-tbphone x="162" y="17" className="tb-svg-k">SHEET</text>
-            <text data-tbright data-tbphone x="162" y="36" className="tb-svg-v">1 OF 6</text>
+            <text data-tbright data-tbphone x="162" y="36" className="tb-svg-v">1 OF 7</text>
             <text data-tbwide x="12" y={TITLE_H / 2 + 17} className="tb-svg-k">SHEET</text>
-            <text data-tbwide x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">1 OF 6</text>
+            <text data-tbwide x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">1 OF 7</text>
             <text data-tbphone x="12" y={TITLE_H / 2 + 17} className="tb-svg-k">REV</text>
             <text data-tbphone x="12" y={TITLE_H / 2 + 36} className="tb-svg-v">{model?.rev ?? ""}</text>
             <text data-tbright data-tbwide x="162" y={TITLE_H / 2 + 17} className="tb-svg-k">REV</text>

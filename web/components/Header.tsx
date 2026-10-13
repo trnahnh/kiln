@@ -20,7 +20,7 @@ export default function Header() {
         </div>
         <div className="tb-cell">
           <span className="tb-k">Sheet</span>
-          <span className="tb-v">1 OF 6</span>
+          <span className="tb-v">1 OF 7</span>
         </div>
         <div className="tb-cell">
           <span className="tb-k">Rev</span>

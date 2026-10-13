@@ -8,6 +8,7 @@ import BlastRadiusDemo from "@/components/BlastRadiusDemo";
 import Guardrails from "@/components/Guardrails";
 import Invariants from "@/components/Invariants";
 import ValidationTable from "@/components/ValidationTable";
+import Evidence from "@/components/Evidence";
 import Footer from "@/components/Footer";
 import { readouts, source } from "@/content/readouts";
 import { site } from "@/content/site";
@@ -104,6 +105,15 @@ export default function Page() {
             lede="Ten developer identities, one simulated week compressed into twenty minutes, three injected failures. The table is the run's own artifact, verbatim; this page fails its build if the two ever differ."
           >
             <ValidationTable bare />
+          </Sheet>
+
+          <Sheet
+            n={7}
+            title="Second pass"
+            drawnBy="Google trace, envtest"
+            lede="The validation week is one run on one cluster. A second pass put the two headline claims against a public workload, the scheduler binary, traffic the decision rule had never seen and a thousand concurrent rollouts, and wrote down where each holds and where it does not. Every figure here is read from METRICS.md the same way the table above is; the commands that reproduce them are in the README."
+          >
+            <Evidence />
           </Sheet>
         </main>
         <Footer />

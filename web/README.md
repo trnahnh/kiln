@@ -19,16 +19,22 @@ pnpm build && pnpm start
 
 ## What is on the page
 
-Sheet 1 is the drawing. Sheets 2 to 6: a specimen viewer per subsystem (stack, the
+Sheet 1 is the drawing. Sheets 2 to 7: a specimen viewer per subsystem (stack, the
 problems it solves, the real CRD or contract it owns from `docs/API_REFERENCE.md`, its decision
 record, its validation number), three working demos of the platform's own rules (the audit hash
 chain with SHA-256 computed in the browser by the rule in `docs/DATA_MODEL.md`, the CostAware
 placement score, the chaos agent's blast-radius floor), the three injected failures drawn to scale,
-the invariants with their ADRs, and the validation table verbatim.
+the invariants with their ADRs, the validation table verbatim, and the second pass over the
+headline claims (the scheduler model against the scheduler binary on the Google cluster trace,
+the canary decision against a threshold and a burn-rate rule with where it loses on held-out
+traffic, the controller scale benchmark before and after its fix, and the Phase 8 proof with its
+postmortem).
 
 ## Where the numbers come from
 
-`docs/METRICS.md` in the repo root is the only owner of every figure on the page.
+`docs/METRICS.md` in the repo root is the only owner of every figure on the page: the
+validation table and its setup lines for sheets 1 to 6, and for sheet 7 the "Detector comparison",
+"Public-trace replay", "Controller scalability" tables and the Phase 8 row of the SLO table.
 
 ```
 pnpm pull:metrics   # parse docs/METRICS.md into content/metrics.json
