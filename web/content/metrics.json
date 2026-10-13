@@ -104,5 +104,159 @@
     "kafkaAcknowledged": 176,
     "publishFailures": 0,
     "chainIntact": true
+  },
+  "outbox": {
+    "runId": "38176386056",
+    "runUrl": "https://github.com/trnahnh/kiln/actions/runs/38176386056",
+    "date": "2026-10-11",
+    "commit": "24d3932",
+    "redDays": 29
+  },
+  "detectors": {
+    "comparison": [
+      {
+        "detector": "sequential test + CUSUM (this controller)",
+        "tuning": "ADR-0014 defaults",
+        "worstFalseRollback": "2.8%",
+        "step30": "30s / 30s, 0.0%",
+        "step2x": "1m15s / 2m30s, 0.0%",
+        "ramp": "1m45s / 2m0s, 0.0%",
+        "latencyTail": "30s / 45s, 0.0%"
+      },
+      {
+        "detector": "threshold, N consecutive breaches",
+        "tuning": "limit x1.5, 4 consecutive",
+        "worstFalseRollback": "2.0%",
+        "step30": "45s / 45s, 0.0%",
+        "step2x": "1m15s / 2m45s, 6.6%",
+        "ramp": "1m45s / 2m30s, 0.0%",
+        "latencyTail": "45s / 45s, 0.0%"
+      },
+      {
+        "detector": "multi-window multi-burn-rate",
+        "tuning": "burn x1.25 (18.0/7.5/1.2)",
+        "worstFalseRollback": "1.8%",
+        "step30": "15s / 15s, 0.0%",
+        "step2x": "3m0s / 3m0s, 2.0%",
+        "ramp": "3m0s / 3m0s, 0.0%",
+        "latencyTail": "3m0s / 3m0s, 0.0%"
+      }
+    ],
+    "holdout": {
+      "classes": 21,
+      "newClasses": 12,
+      "lowTrafficFalseRollback": "99.3%",
+      "retryStormFalseRollback": "7.5%",
+      "alpha": "5%",
+      "heavyTailMiss": "27.9%",
+      "beta": "10%",
+      "heavyTailMissBurnRate": "42.4%",
+      "heavyTailMissThreshold": "97%",
+      "flagrantBurnRateSeconds": 15,
+      "flagrantSequentialSeconds": 30
+    }
+  },
+  "trace": {
+    "machines": 12477,
+    "runningTasks": 132982,
+    "placements": 57012,
+    "empty": [
+      {
+        "placement": "default profile",
+        "billedModel": "723.06",
+        "billedBinary": "713.29",
+        "vsDefaultModel": "",
+        "vsDefaultBinary": "",
+        "latencyClassOnSpotModel": 249,
+        "latencyClassOnSpotBinary": 257,
+        "machinesModel": 12403,
+        "machinesBinary": 12466,
+        "utilModel": "5.9%",
+        "utilBinary": "5.6%"
+      },
+      {
+        "placement": "kiln profile",
+        "billedModel": "59.56",
+        "billedBinary": "65.51",
+        "vsDefaultModel": "-91.8%",
+        "vsDefaultBinary": "-90.8%",
+        "latencyClassOnSpotModel": 0,
+        "latencyClassOnSpotBinary": 0,
+        "machinesModel": 2104,
+        "machinesBinary": 2253,
+        "utilModel": "43.5%",
+        "utilBinary": "40.0%"
+      }
+    ],
+    "full": [
+      {
+        "placement": "default scheduler (least-allocated + balanced)",
+        "billed": "1329.75",
+        "vsDefault": "+0.0%",
+        "machines": 2499,
+        "latencyClassOnSpot": 263,
+        "unplaced": 24305,
+        "util": "92.3%"
+      },
+      {
+        "placement": "kiln-scheduler (cost-aware scoring)",
+        "billed": "1329.75",
+        "vsDefault": "-0.0%",
+        "machines": 2638,
+        "latencyClassOnSpot": 0,
+        "unplaced": 24362,
+        "util": "93.2%"
+      }
+    ]
+  },
+  "scale": {
+    "before": [
+      {
+        "rollouts": 500,
+        "workers": 1,
+        "clientBudget": "20/30",
+        "rolloutWave": "9m21s",
+        "finished": 500,
+        "reconcileP50P99": "98ms / 155ms",
+        "tickLateness": "35s / 35s / 36s",
+        "queueDepthMaxMean": "500 / 491.6",
+        "controllerWritesPerSecond": 33.8
+      },
+      {
+        "rollouts": 1000,
+        "workers": 1,
+        "clientBudget": "20/30",
+        "rolloutWave": "12m39s, timed out",
+        "finished": 0,
+        "reconcileP50P99": "100ms / 135ms",
+        "tickLateness": "85s / 85s / 86s",
+        "queueDepthMaxMean": "1000 / 998.6",
+        "controllerWritesPerSecond": 33.3
+      }
+    ],
+    "after": [
+      {
+        "rollouts": 500,
+        "workers": 8,
+        "clientBudget": "100/200",
+        "rolloutWave": "2m39s",
+        "finished": 500,
+        "reconcileP50P99": "14ms / 122ms",
+        "tickLateness": "0s / 1s / 2s",
+        "queueDepthMaxMean": "185 / 33.0",
+        "controllerWritesPerSecond": 151.7
+      },
+      {
+        "rollouts": 1000,
+        "workers": 8,
+        "clientBudget": "100/200",
+        "rolloutWave": "3m58s",
+        "finished": 1000,
+        "reconcileP50P99": "81ms / 160ms",
+        "tickLateness": "5s / 10s / 10s",
+        "queueDepthMaxMean": "982 / 618.8",
+        "controllerWritesPerSecond": 193.2
+      }
+    ]
   }
 }
