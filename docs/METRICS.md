@@ -44,7 +44,7 @@ The targets above are exit criteria: thresholds a phase had to clear once. An SL
 | No more than 5% of healthy rollouts are rolled back | `ROLLBACK` rows whose canary never breached its limits over a window, judged after the fact from Prometheus | 28 days; 5% of healthy rollouts | simulation worst class 2.8%; 0 of 29 healthy deploys rolled back on the cluster |
 | A chaos experiment that breaches its SLO has every fault removed from the node within 60 s of the breach | `CHAOS_EXPERIMENT Aborted` row and the `iptables`/`tc` state on the node | an invariant, no budget | abort 25 s after the fault went live, rule gone 1 s after the row |
 | 99% of audit queries over an actor and time range return within 1 s with the same count `psql` gives | client round trip of `GET /v1/audit` and the psql cross-check | 28 days; 1% of queries | p95 108 ms, n=10, every count matching |
-| Every audited transition has exactly one audit row | informer-observed transitions versus rows, and the chain verification | an invariant, no budget | proven for the simulated week (201 rows, 0 publish failures); the under-crash proof (Phase 8) has not yet passed in CI, see `docs/postmortems/2026-10-10-nightly-red-for-29-days.md` |
+| Every audited transition has exactly one audit row | informer-observed transitions versus rows, and the chain verification | an invariant, no budget | proven for the simulated week (201 rows, 0 publish failures); the under-crash proof (Phase 8) passed in CI run [38176386056](https://github.com/trnahnh/kiln/actions/runs/38176386056) on 2026-10-11 on commit `24d3932`, after a harness bug had kept it red for 29 days, see `docs/postmortems/2026-10-10-nightly-red-for-29-days.md` |
 
 ## Detector comparison
 

@@ -34,7 +34,7 @@ Sequenced by dependency, not by calendar time. Each phase has a hard exit criter
   Scope: the end-to-end request flow through the REST path across the six already-deployed subsystems, with one OpenTelemetry trace spanning it (the cross-cutting section of [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md#cross-cutting-observability)); run the Validation Plan in [`METRICS.md`](METRICS.md#validation-plan).
   Exit criterion: the full synthetic case study completes and produces a before/after comparison table against the baselines in `METRICS.md`.
 
-- [ ] **Phase 8: Durable audit outbox**
+- [x] **Phase 8: Durable audit outbox**
   Scope: every controller records an audit event in its CR's status in the same write that commits the transition, and a drainer publishes it afterwards, so a crash between the transition and Kafka's acknowledgement loses nothing (ADR-0022, superseding the memory-only buffer of ADR-0017). The REST path publishes before it applies. The scheduler's `SCHEDULE` event stays memory-buffered as a named residual.
   Exit criterion: with every controller SIGKILLed repeatedly during a burst of requests, each phase transition observed by an informer the test owns has exactly one audit row, the chain verifies, and `kiln_audit_publish_failures_total` is zero.
 
