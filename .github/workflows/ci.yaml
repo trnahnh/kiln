@@ -216,6 +216,7 @@ jobs:
           kubectl get events -A --sort-by=.lastTimestamp > cluster-state/events.txt 2>&1
           kubectl describe nodes > cluster-state/nodes.txt 2>&1
           free -m > cluster-state/host-memory.txt 2>&1
+          { sysctl fs.inotify; ulimit -n; } > cluster-state/host-limits.txt 2>&1
           docker stats --no-stream > cluster-state/docker-stats.txt 2>&1
           kind export logs cluster-state/kind --name kiln-dev
           exit 0
