@@ -184,6 +184,8 @@ jobs:
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
           bash hack/audit-secrets.sh
           kubectl apply -f gitops/argocd/root.yaml
+      - name: wait for argocd to deliver the platform
+        run: bash hack/wait-for-platform.sh 900
       - run: go test -tags=e2e ./... -v -count=1 -timeout 100m
         working-directory: e2e
         env:
