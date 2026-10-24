@@ -5,3 +5,8 @@ namespace: argocd
 resources:
   - namespace.yaml
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/install.yaml
+images:
+  # public.ecr.aws answers anonymous pulls from shared CI runner IPs with 429 "Data limit
+  # exceeded"; without redis the repo-server cannot list refs and nothing syncs.
+  - name: public.ecr.aws/docker/library/redis
+    newName: docker.io/library/redis
