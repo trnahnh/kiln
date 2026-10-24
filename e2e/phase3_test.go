@@ -151,6 +151,10 @@ func workerFacts(t *testing.T, g *WithT, ctx context.Context, c client.Client) m
 func replay(t *testing.T, g *WithT, ctx context.Context, c client.Client, scheduler, ns string, trace []traceEntry, nodes map[string]nodeFacts) replayResult {
 	g.Expect(c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
 	defer func() { _ = c.Delete(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}) }()
+	// Admission rejects a pod until the controller-manager has created the namespace's default ServiceAccount.
+	g.Eventually(func() error {
+		return c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "default"}, &corev1.ServiceAccount{})
+	}, time.Minute, poll).Should(Succeed(), "namespace %s never got its default service account", ns)
 
 	start := time.Now()
 	for _, e := range trace {
