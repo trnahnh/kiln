@@ -166,6 +166,12 @@ jobs:
           make -C delivery-controller docker-build
           make -C chaos docker-build
           make -C audit-service docker-build
+      # The runner image writes these to /etc/sysctl.conf; on ubuntu-26.04 the Phase 7 week's
+      # sidecars exit 255 on start, kind's known symptom of the defaults.
+      - name: raise the inotify limits kind needs
+        run: |
+          sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+          sudo sysctl -w fs.inotify.max_user_instances=1280 fs.inotify.max_user_watches=655360
       - uses: helm/kind-action@v1
         with:
           config: kind-config.yaml
