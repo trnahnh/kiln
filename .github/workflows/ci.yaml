@@ -196,6 +196,28 @@ jobs:
           name: validation-results
           path: validation-results.md
           if-no-files-found: ignore
+      # kind-action deletes the cluster when the job ends; this is the only record of why it failed.
+      - name: capture the cluster state
+        if: failure()
+        run: |
+          set +e
+          mkdir -p cluster-state
+          kubectl -n argocd get applications -o wide > cluster-state/applications.txt 2>&1
+          kubectl -n argocd get applications -o yaml > cluster-state/applications.yaml 2>&1
+          kubectl get pods -A -o wide > cluster-state/pods.txt 2>&1
+          kubectl get events -A --sort-by=.lastTimestamp > cluster-state/events.txt 2>&1
+          kubectl describe nodes > cluster-state/nodes.txt 2>&1
+          free -m > cluster-state/host-memory.txt 2>&1
+          docker stats --no-stream > cluster-state/docker-stats.txt 2>&1
+          kind export logs cluster-state/kind --name kiln-dev
+          exit 0
+      - name: the cluster state
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-state
+          path: cluster-state
+          if-no-files-found: ignore
 
   # A scheduled run's failure notifies nobody by default; a red nightly sat unseen for 29
   # days (docs/postmortems/2026-10-10-nightly-red-for-29-days.md). This opens one issue per
