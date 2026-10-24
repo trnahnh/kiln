@@ -180,7 +180,7 @@ jobs:
           kubectl apply -f gitops/observability/
           kubectl -n monitoring rollout status deploy/prometheus deploy/jaeger --timeout=300s
           kubectl apply -k gitops/argocd/install --server-side
-          kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server --timeout=300s
+          kubectl -n argocd rollout status deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis --timeout=300s
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
           bash hack/audit-secrets.sh
           kubectl apply -f gitops/argocd/root.yaml
